@@ -440,9 +440,9 @@ class LocaleQuerySet(models.QuerySet):
         """
         return self.filter(translatedresources__isnull=False).distinct()
 
-    def prefetch_latest_translation(self, project):
+    def prefetch_project_locale(self, project):
         """
-        Prefetch latest translation data for given project.
+        Prefetch ProjectLocale and latest translation data for given project.
         """
         return self.prefetch_related(
             Prefetch(
@@ -451,7 +451,7 @@ class LocaleQuerySet(models.QuerySet):
                     ProjectLocale.objects.filter(project=project)
                     .prefetch_related('latest_translation__user')
                 ),
-                to_attr='fetched_latest_translation'
+                to_attr='fetched_project_locale'
             )
         )
 
@@ -824,9 +824,9 @@ class ProjectQuerySet(models.QuerySet):
         """
         return self.filter(disabled=False, resources__isnull=False).distinct()
 
-    def prefetch_latest_translation(self, locale):
+    def prefetch_project_locale(self, locale):
         """
-        Prefetch latest translation data for given locale.
+        Prefetch ProjectLocale and latest translation data for given locale.
         """
         return self.prefetch_related(
             Prefetch(
@@ -835,7 +835,7 @@ class ProjectQuerySet(models.QuerySet):
                     ProjectLocale.objects.filter(locale=locale)
                     .prefetch_related('latest_translation__user')
                 ),
-                to_attr='fetched_latest_translation'
+                to_attr='fetched_project_locale'
             )
         )
 
@@ -1169,11 +1169,9 @@ class ProjectLocale(AggregatedStats):
         """
         latest_translation = None
 
-        if hasattr(self, 'fetched_latest_translation'):
-            if self.fetched_latest_translation:
-                latest_translation = self.fetched_latest_translation[0].latest_translation
-            else:
-                latest_translation = None
+        if getattr(self, 'fetched_project_locale', None):
+            if self.fetched_project_locale:
+                latest_translation = self.fetched_project_locale[0].latest_translation
 
         elif extra is None:
             latest_translation = self.latest_translation
@@ -1200,7 +1198,11 @@ class ProjectLocale(AggregatedStats):
         """
         chart = None
 
-        if extra is None:
+        if getattr(self, 'fetched_project_locale', None):
+            if self.fetched_project_locale:
+                chart = cls.get_chart_dict(self.fetched_project_locale[0])
+
+        elif extra is None:
             chart = cls.get_chart_dict(self)
 
         else:
@@ -1670,6 +1672,11 @@ class Entity(DirtyFieldsMixin, models.Model):
     )
     objects = EntityQuerySet.as_manager()
 
+    class Meta:
+        index_together = (
+            ('resource', 'obsolete', 'string_plural'),
+        )
+
     @property
     def marked(self):
         return utils.mark_placeables(self.string)
@@ -1778,7 +1785,7 @@ class Entity(DirtyFieldsMixin, models.Model):
             search_query = (search, locale.db_collation)
             entities = (
                 Entity.objects.filter(
-                    Q(translation__string__icontains_collate=search_query, translation__locale=locale) | Q(translation__entity_document__icontains=search),
+                    Q(translation__string__icontains_collate=search_query, translation__locale=locale) | Q(string__icontains=search) | Q(string_plural__icontains=search) | Q(comment__icontains=search) | Q(key__icontains=search),
                     pk__in=entities
                 )
                 .distinct()
@@ -1956,6 +1963,12 @@ class Translation(DirtyFieldsMixin, models.Model):
     # this translation is stored in, but that we otherwise don't care
     # about.
     extra = JSONField(default=extra_default)
+
+    class Meta:
+        index_together = (
+            ('entity', 'locale', 'approved'),
+            ('entity', 'locale', 'fuzzy'),
+        )
 
     @classmethod
     def for_locale_project_paths(self, locale, project, paths):
