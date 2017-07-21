@@ -31,20 +31,6 @@ var Pontoon = (function (my) {
     },
 
     /*
-<<<<<<< HEAD
-    * Remove duplicate items from the array of numeric values
-    *
-    * TODO: Switch to ES6 and replace with Set
-    */
-   removeDuplicates: function (array) {
-     var seen = {};
-     return array.filter(function(item) {
-       return seen.hasOwnProperty(item) ? false : (seen[item] = true);
-     });
-   },
-
-/*
-=======
      * Remove duplicate items from the array of numeric values
      *
      * TODO: Switch to ES6 and replace with Set
@@ -57,7 +43,6 @@ var Pontoon = (function (my) {
     },
 
     /*
->>>>>>> upstream/master
      * Mark all notifications as read and update UI accordingly
      */
     markAllNotificationsAsRead: function () {
