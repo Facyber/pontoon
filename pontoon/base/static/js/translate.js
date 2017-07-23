@@ -2898,11 +2898,11 @@ var Pontoon = (function (my) {
 
 
     /*
-     * Update authors list in filter menu
+     * Update authors list in extended filter menu
      */
     updateAuthors: function (authors) {
       var self = this,
-          $forAuthors = $('#filter').find('.for-authors').toggle(authors.length > 0);
+          $forAuthors = $('#filter .extended').find('.for-authors').toggle(authors.length > 0);
 
       $('#filter .menu li.author').remove();
 
@@ -2923,6 +2923,25 @@ var Pontoon = (function (my) {
       });
     },
 
+    /*
+     * Update authors list in minimal filter menu
+     */
+    updateAuthors: function (authors) {
+      var self = this,
+          $forAuthors = $('#filter .minimal').find('.for-authors').show(authors.length > 0);
+
+      $('#filter .menu li.author').remove();
+
+      $.each(authors, function() {
+        $forAuthors.after('<li class="author" data-type="' + this.email + '">' +
+          '<figure>' +
+            '<span class="sel">' +
+              '<span class="status fa"></span>' +
+              '<img class="rounded" src="' + this.gravatar_url + '">' +
+            '</span>' +
+        '</li>');
+      });
+    },
 
     /*
      * Reset Time range filter to default
@@ -3485,7 +3504,7 @@ var Pontoon = (function (my) {
      */
     withoutInPlace: function() {
       var self = this;
-      $('#sidebar').addClass('advanced').css('width', '100%');
+      $('#sidebar').addClass('advanced').css('width', 'calc(100% - 80px)');
       $('#entitylist').css('left', '');
 
       self.createObject(true);

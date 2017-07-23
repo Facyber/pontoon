@@ -599,6 +599,15 @@ $(function() {
     $form.submit();
   });
 
+  // Expand filter menu on click
+
+  $('#filter').on('click', '.selector', function (e) {
+    $('.menu').toggleClass('extended');
+    $('#sidebar').toggleClass('advanced').css('width', 'calc(100% - 350px)');
+    $('#sidebar').toggleClass('advanced').css('left', '350px');
+});
+
+
   // Show/hide menu on click
   $('body').on('click', '.selector', function (e) {
     if (!$(this).siblings('.menu').is(':visible')) {

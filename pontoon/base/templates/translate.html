@@ -4,6 +4,7 @@
 {% import "widgets/button.html" as Button %}
 {% import "widgets/keyboard_shortcut.html" as Shortcut %}
 {% import "widgets/filter_item.html" as Filter %}
+{% import "widgets/filter_min_item.html" as FilterMin %}
 {% import "widgets/signout.html" as SignOut with context %}
 {% import "widgets/profile.html" as Profile with context %}
 {% import "contributors/widgets/notifications_menu.html" as Notifications with context %}
@@ -149,66 +150,62 @@
   </div>
 </header>
 
+<!-- Filter menu -->
+<div id="filter-menu">
+  <div id="filter" class="select" data-current-filter="all">
+    <div class="button selector all ">
+      <span class="status fa"></span>
+    </div>
+    <div class="menu minimal">
+
+      <ul>
+        <li class="horizontal-separator"></li>
+
+        {{ FilterMin.item('all') }}
+        {{ FilterMin.item('missing') }}
+        {{ FilterMin.item('fuzzy') }}
+        {{ FilterMin.item('suggested') }}
+        {{ FilterMin.item('translated') }}
+
+        <li class="horizontal-separator"></li>
+
+        {{ FilterMin.item('untranslated') }}
+        {{ FilterMin.item('unchanged') }}
+        {{ FilterMin.item('has-suggestions') }}
+
+        <li class="horizontal-separator for-time-range"></li>
+
+        <li class="time-range clearfix" data-type="time-range">
+          <span class="status fa"></span>
+        </li>
+
+        <li class="horizontal-separator for-authors"></li>
+      </ul>
+      <div class="toolbar clearfix">
+        <a class="apply-selected" href="#apply-filters" title="Apply Selected Filters">
+          <span class="fa fa-check fa-lg"></span>
+          Apply
+          <span class="applied-count"></span>
+          <span class="variant">
+            <span class="singular">filter</span>
+            <span class="plural">filters</span>
+          </span>
+        </a>
+        <a class="clear-selected" href="#clear-filters" title="Uncheck selected filters">
+          <span class="fa fa-remove fa-lg"></span>
+          Clear
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
 <aside id="sidebar">
   <!-- Strings placeholder -->
   <div id="entitylist">
     <div class="search-wrapper clearfix">
       <div class="icon fa fa-search"></div>
       <input id="search" type="search" autocomplete="off" placeholder="Search in All" title="Search Strings (Ctrl + Shift + F)">
-      <div id="filter" class="select" data-current-filter="all">
-        <div class="button selector all">
-          <span class="status fa"></span>
-        </div>
-        <div class="menu">
-          <ul>
-            <li class="horizontal-separator">Translation Status</li>
-
-            {{ Filter.item('all', 'All', count=True) }}
-            {{ Filter.item('missing', 'Missing', count=True) }}
-            {{ Filter.item('fuzzy', 'Fuzzy', count=True) }}
-            {{ Filter.item('suggested', 'Suggested', count=True) }}
-            {{ Filter.item('translated', 'Translated', count=True) }}
-
-            <li class="horizontal-separator">Extra Filters</li>
-
-            {{ Filter.item('untranslated', 'Untranslated') }}
-            {{ Filter.item('unchanged', 'Unchanged') }}
-            {{ Filter.item('has-suggestions', 'Has Suggestions') }}
-
-            <li class="horizontal-separator for-time-range">
-              Translation Time
-              <button class="edit" data-alternative="Save Range"><span class="fa fa-area-chart"></span>Edit Range</button>
-            </li>
-
-            <li class="time-range clearfix" data-type="time-range">
-              <span class="status fa"></span>
-              <span class="title">Time Range</span>
-              <div class="clearfix">
-                <label for="from">From<input type="datetime" id="from" disabled></label>
-                <label for="to">To<input type="datetime" id="to" disabled></label>
-              </div>
-              <div id="range-picker"></div>
-            </li>
-
-            <li class="horizontal-separator for-authors">Translation Authors</li>
-          </ul>
-          <div class="toolbar clearfix">
-            <a class="clear-selected" href="#clear-filters" title="Uncheck selected filters">
-              <span class="fa fa-remove fa-lg"></span>
-              Clear
-            </a>
-            <a class="apply-selected" href="#apply-filters" title="Apply Selected Filters">
-              <span class="fa fa-check fa-lg"></span>
-              Apply
-              <span class="applied-count"></span>
-              <span class="variant">
-                <span class="singular">filter</span>
-                <span class="plural">filters</span>
-              </span>
-            </a>
-          </div>
-        </div>
-      </div>
     </div>
     <div class="wrapper unselectable">
       <ul class="editables"></ul>
