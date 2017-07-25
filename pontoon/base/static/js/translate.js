@@ -2907,7 +2907,7 @@ var Pontoon = (function (my) {
      */
     updateAuthors: function (authors) {
       var self = this,
-          $forAuthors = $('#filter .extended').find('.for-authors').toggle(authors.length > 0);
+          $forAuthors = $('.extended').find('.for-authors').toggle(authors.length > 0);
 
       $('#filter .menu li.author').remove();
 
@@ -3623,7 +3623,7 @@ var Pontoon = (function (my) {
       // No entities found
       if (!self.entities.length) {
         if (!self.requiresInplaceEditor()) {
-          $('#sidebar').addClass('advanced').css('width', '100%');
+          $('#sidebar').addClass('advanced').css('width', 'calc(100% - 80px)');
           $('#iframe-cover').addClass('hidden').hide();
           self.setNotOnPage();
           self.setNoMatch(true);

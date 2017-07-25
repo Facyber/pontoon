@@ -601,10 +601,18 @@ $(function() {
 
   // Expand filter menu on click
 
-  $('#filter').on('click', '.selector', function (e) {
-    $('.menu').toggleClass('extended');
-    $('#sidebar').toggleClass('advanced').css('width', 'calc(100% - 350px)');
-    $('#sidebar').toggleClass('advanced').css('left', '350px');
+  $('#expand-button').on('click', function (e) {
+    $('.minimal').toggleClass('extended');
+    if ($('#sidebar').width() == document.body.offsetWidth - 81) {
+      $('#sidebar').addClass('advanced').css({'width': 'calc(100% - 350px)', 'left': '350px'});
+      $('.minimal-list').hide();
+      $('.extended-list').show();
+    } else {
+      $('#sidebar').addClass('advanced').css({'width': 'calc(100% - 80px)', 'left': '80px'});
+      $('.minimal-list').show();
+      $('.extended-list').hide();
+    };
+
 });
 
 

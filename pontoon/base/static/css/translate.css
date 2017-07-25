@@ -517,6 +517,11 @@ body > header aside p {
   left: 80px;
 }
 
+#sidebar.advanced {
+  width: 700px;
+  left: 80px;
+}
+
 #sidebar [id^="drag"] {
   cursor: ew-resize;
   display: none;
@@ -606,13 +611,16 @@ body > header aside p {
 
 #filter-menu {
   position: fixed;
-  width: 80px;
   height: 100%;
   top: 60px;
 }
 
 .extended {
   width: 350px !important;
+}
+
+.extended-list {
+  display: none;
 }
 
 #filter {
@@ -646,9 +654,7 @@ body > header aside p {
 }
 
 #filter .menu ul {
-  top: 20px;
   margin: 20px 20px 20px 29px;
-  /*margin: 15px 7px;*/
 }
 
 #filter.fixed .menu ul {
@@ -665,14 +671,18 @@ body > header aside p {
   color: #7BC876;
   cursor: default;
   font-size: 13px;
-  height: auto;
+  height: 16px;
   padding-top: 20px;
   text-transform: uppercase;
 }
 
 #filter .menu li:not(.horizontal-separator) {
-  padding: 11px 20px 12px 2px;
+  padding: 13px 20px 12px 2px;
   position: relative;
+}
+
+#filter .menu .extended-list li:not(.horizontal-separator) {
+  padding: 4px 0px 4px 30px;
 }
 
 #filter .menu li.horizontal-separator button {
@@ -728,13 +738,8 @@ body > header aside p {
   font-size: 13px;
 }
 
-#filter .menu li.time-range label[for="from"] {
-  margin-left: 30px;
-}
-
 #filter .menu li.time-range label[for="to"] {
   float: right;
-  margin-right: 4px;
 }
 
 #filter .menu li.time-range input {
@@ -746,7 +751,7 @@ body > header aside p {
   font-size: 13px;
   font-weight: 300;
   height: 17px;
-  margin-left: 5px;
+  margin-left: 3px;
   outline: none;
   vertical-align: baseline;
   width: 109px;
@@ -877,7 +882,7 @@ body > header aside p {
 
 #filter .menu li.author {
   height: 48px;
-  padding-left: 4px;
+  padding-left: 4px !important;
   white-space: nowrap;
 }
 
@@ -956,6 +961,10 @@ body > header aside p {
   bottom: 0;
   width: 350px;
   z-index: 10;
+}
+
+#extended-toolbar {
+  display: none;
 }
 
 #filter .clear-selection {
