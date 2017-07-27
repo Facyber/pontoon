@@ -599,21 +599,23 @@ $(function() {
     $form.submit();
   });
 
-  // Expand filter menu on click
-
+  // Expand/colapse filter menu on click
   $('#expand-button').on('click', function (e) {
-    $('.minimal').toggleClass('extended');
     if ($('#sidebar').width() == document.body.offsetWidth - 81) {
+      $('#expand-button').addClass('colapse-button');
       $('#sidebar').addClass('advanced').css({'width': 'calc(100% - 350px)', 'left': '350px'});
+      $('.menu').removeClass('minimal').addClass('extended');
       $('.minimal-list').hide();
       $('.extended-list').show();
     } else {
+      $('#expand-button').removeClass('colapse-button');
       $('#sidebar').addClass('advanced').css({'width': 'calc(100% - 80px)', 'left': '80px'});
+      $('.menu').removeClass('extended').addClass('minimal');
       $('.minimal-list').show();
       $('.extended-list').hide();
-    };
 
-});
+    };
+  });
 
 
   // Show/hide menu on click

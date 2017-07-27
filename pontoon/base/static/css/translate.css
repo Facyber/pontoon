@@ -340,9 +340,23 @@ body > header .locale.select {
 
 .all .status:before {
   color: #AAAAAA;
-  /*content: "";*/
   content: "";
   font-size: 21px;
+}
+
+#expand-button:before {
+  color: #AAAAAA;
+  content: "";
+  font-size: 21px;
+}
+
+.colapse-button {
+  margin-left: 280px;
+  -moz-transform: scale(-1, 1);
+  -webkit-transform: scale(-1, 1);
+  -o-transform: scale(-1, 1);
+  -ms-transform: scale(-1, 1);
+  transform: scale(-1, 1);
 }
 
 #progress {
@@ -654,11 +668,16 @@ body > header aside p {
 }
 
 #filter .menu ul {
-  margin: 20px 20px 20px 29px;
+  margin-top: 20px;
 }
 
 #filter.fixed .menu ul {
   margin-bottom: 54px;
+}
+
+#filter .menu li {
+  margin-left: 29px;
+  margin-right: 21px;
 }
 
 #filter .menu li.hover {
@@ -882,8 +901,12 @@ body > header aside p {
 
 #filter .menu li.author {
   height: 48px;
-  padding-left: 4px !important;
+  margin-left: 16px;
   white-space: nowrap;
+}
+
+#filter .menu .extended-list li.author {
+  margin-left: 4px !important;
 }
 
 #filter .menu li.author figure {
@@ -963,10 +986,6 @@ body > header aside p {
   z-index: 10;
 }
 
-#extended-toolbar {
-  display: none;
-}
-
 #filter .clear-selection {
   float: left;
 }
@@ -1034,6 +1053,7 @@ body > header aside p {
 
 #filter .menu li.author .count {
   top: 8px;
+  display: none;
 }
 
 #filter .menu li.hover .count {

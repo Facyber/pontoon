@@ -1166,7 +1166,7 @@ var Pontoon = (function (my) {
       for (var type in filter) {
         if (filter[type] && filter[type] !== []) {
           if (type === 'status' || type === 'extra' || type === 'author') {
-            markSelectedFilters(type);
+            markSelectedFilters(type); // Ako se izbriše gube se filter na klik
 
           } else if (type === 'time') {
             var node = $('#filter .menu [data-type="time-range"]');
@@ -1317,7 +1317,7 @@ var Pontoon = (function (my) {
       var self = this;
 
       // Filter entities by multiple filters
-      $('#filter').on('click', 'li[data-type]:not(".editing"):not(".all") .status', function(e) {
+      $('#filter').on('click', '.extended li[data-type]:not(".editing"):not(".all") .status', function(e) {
         e.stopPropagation();
 
         var el = $(this).parents('li'),
@@ -1411,7 +1411,28 @@ var Pontoon = (function (my) {
         self.applySelectedFilters();
       });
 
-      // Update authors and time range
+      // Update authors and time range on window load
+      $(window).load(function(e) {
+      console.log('window load');
+        if ($('#filter').is('.opened')) {
+          return;
+        }
+
+        self.NProgressUnbind();
+
+        $.ajax({
+          url: '/' + self.locale.code + '/' + self.project.slug + '/' + self.part + '/authors-and-time-range/',
+          success: function(data) {
+            self.updateRangePicker(data.counts_per_minute);
+            self.updateAuthors(data.authors);
+          }
+        });
+
+        self.NProgressBind();
+      });
+
+
+      // Update authors and time range on click
       $('#filter:not(".opened") .selector').click(function(e) {
         if ($('#filter').is('.opened')) {
           return;
@@ -2903,50 +2924,43 @@ var Pontoon = (function (my) {
 
 
     /*
-     * Update authors list in extended filter menu
-     */
+     * Update authors list in extended filter menu */
+
     updateAuthors: function (authors) {
       var self = this,
-          $forAuthors = $('.extended').find('.for-authors').toggle(authors.length > 0);
+          $forAuthors = $('#filter').find('.for-authors').toggle(authors.length > 0);
 
       $('#filter .menu li.author').remove();
 
-      $.each(authors, function() {
-        $forAuthors.after('<li class="author" data-type="' + this.email + '">' +
-          '<figure>' +
-            '<span class="sel">' +
-              '<span class="status fa"></span>' +
-              '<img class="rounded" src="' + this.gravatar_url + '">' +
-            '</span>' +
-            '<figcaption>' +
-              '<p class="name">' + this.display_name + '</p>' +
-              '<p class="role">' + this.role + '</p>' +
-            '</figcaption>' +
-            '<span class="count">' + self.numberWithCommas(this.translation_count) + '</span>' +
-          '</figure>' +
-        '</li>');
-      });
-    },
-
-    /*
-     * Update authors list in minimal filter menu
-     */
-    updateAuthors: function (authors) {
-      var self = this,
-          $forAuthors = $('#filter .minimal').find('.for-authors').show(authors.length > 0);
-
-      $('#filter .menu li.author').remove();
-
-      $.each(authors, function() {
-        $forAuthors.after('<li class="author" data-type="' + this.email + '">' +
-          '<figure>' +
-            '<span class="sel">' +
-              '<span class="status fa"></span>' +
-              '<img class="rounded" src="' + this.gravatar_url + '">' +
-            '</span>' +
-        '</li>');
-      });
-    },
+        if ($('#filter .menu').hasClass('minimal')) {
+          $.each(authors, function() {
+            $forAuthors.after('<li class="author" data-type="' + this.email + '">' +
+              '<figure>' +
+                '<span class="sel">' +
+                  '<span class="status fa"></span>' +
+                  '<img class="rounded" src="' + this.gravatar_url + '">' +
+                '</span>' +
+                '</figure>' +
+            '</li>');
+          });
+      } else  {
+          $.each(authors, function() {
+            $forAuthors.after('<li class="author" data-type="' + this.email + '">' +
+              '<figure>' +
+                '<span class="sel">' +
+                  '<span class="status fa"></span>' +
+                  '<img class="rounded" src="' + this.gravatar_url + '">' +
+                '</span>' +
+                  '<figcaption>' +
+                    '<p class="name">' + this.display_name + '</p>' +
+                    '<p class="role">' + this.role + '</p>' +
+                  '</figcaption>' +
+                  '<span class="count">' + self.numberWithCommas(this.translation_count) + '</span>' +
+                '</figure>' +
+            '</li>');
+          });
+        };
+      },
 
     /*
      * Reset Time range filter to default
