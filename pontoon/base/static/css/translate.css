@@ -350,15 +350,6 @@ body > header .locale.select {
   font-size: 21px;
 }
 
-.colapse-button {
-  margin-left: 280px;
-  -moz-transform: scale(-1, 1);
-  -webkit-transform: scale(-1, 1);
-  -o-transform: scale(-1, 1);
-  -ms-transform: scale(-1, 1);
-  transform: scale(-1, 1);
-}
-
 #progress {
   cursor: pointer;
   display: none;
@@ -680,8 +671,12 @@ body > header aside p {
   margin-right: 21px;
 }
 
-#filter .menu li.hover {
+#filter .menu .minimal-list li.hover {
   background: none !important;
+}
+
+#filter .menu .extended-list li.hover {
+  background-color: color: #7BC876;
 }
 
 #filter .menu li.horizontal-separator {
@@ -696,12 +691,16 @@ body > header aside p {
 }
 
 #filter .menu li:not(.horizontal-separator) {
-  padding: 13px 20px 12px 2px;
+  padding: 13.2px 20px 12px 2px;
   position: relative;
 }
 
 #filter .menu .extended-list li:not(.horizontal-separator) {
-  padding: 4px 0px 4px 30px;
+  padding: 4px 0;
+}
+
+.extended-list li span, .time-range .clearfix, .author p {
+  margin-left: 30px;
 }
 
 #filter .menu li.horizontal-separator button {
@@ -773,7 +772,7 @@ body > header aside p {
   margin-left: 3px;
   outline: none;
   vertical-align: baseline;
-  width: 109px;
+  width: 105px;
 
   -moz-box-sizing: border-box;
   box-sizing: border-box;
@@ -803,7 +802,7 @@ body > header aside p {
   display: none;
   height: 120px;
   margin: 0 auto;
-  width: 306px;
+  width: 289px;
 }
 
 #ui-datepicker-div {
@@ -901,12 +900,16 @@ body > header aside p {
 
 #filter .menu li.author {
   height: 48px;
-  margin-left: 16px;
   white-space: nowrap;
 }
 
-#filter .menu .extended-list li.author {
-  margin-left: 4px !important;
+#filter .menu .minimal-list li.author {
+  margin-top: 13px;
+  margin-left: 16px;
+}
+
+#filter .menu .extended-list li.author figure {
+  margin-left: -26px;
 }
 
 #filter .menu li.author figure {

@@ -602,18 +602,17 @@ $(function() {
   // Expand/colapse filter menu on click
   $('#expand-button').on('click', function (e) {
     if ($('#sidebar').width() == document.body.offsetWidth - 81) {
-      $('#expand-button').addClass('colapse-button');
+      $('#filter .button').css({'left': '297px', 'transform': 'scale(-1, 1)'});
       $('#sidebar').addClass('advanced').css({'width': 'calc(100% - 350px)', 'left': '350px'});
       $('.menu').removeClass('minimal').addClass('extended');
       $('.minimal-list').hide();
       $('.extended-list').show();
     } else {
-      $('#expand-button').removeClass('colapse-button');
+      $('#filter .button').css({'left': '17px', 'transform': 'scale(1, -1)'});
       $('#sidebar').addClass('advanced').css({'width': 'calc(100% - 80px)', 'left': '80px'});
       $('.menu').removeClass('extended').addClass('minimal');
       $('.minimal-list').show();
       $('.extended-list').hide();
-
     };
   });
 

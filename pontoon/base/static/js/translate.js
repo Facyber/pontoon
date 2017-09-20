@@ -1166,7 +1166,7 @@ var Pontoon = (function (my) {
       for (var type in filter) {
         if (filter[type] && filter[type] !== []) {
           if (type === 'status' || type === 'extra' || type === 'author') {
-            markSelectedFilters(type); // Ako se izbriše gube se filter na klik
+            markSelectedFilters(type);
 
           } else if (type === 'time') {
             var node = $('#filter .menu [data-type="time-range"]');
@@ -1181,7 +1181,7 @@ var Pontoon = (function (my) {
         $('#filter .menu [data-type="untranslated"]').addClass('selected');
       }
 
-      var selectedCount = $('#filter .selected').length;
+      var selectedCount = $('#filter .extended-list .selected').length;
 
       // If only one filter selected, use it's own icon in the filter selector
       if (selectedCount === 1) {
@@ -1413,8 +1413,7 @@ var Pontoon = (function (my) {
 
       // Update authors and time range on window load
       $(window).load(function(e) {
-      console.log('window load');
-        if ($('#filter').is('.opened')) {
+        if ($('#filter .menu').is('.opened')) {
           return;
         }
 
