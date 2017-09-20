@@ -1151,7 +1151,7 @@ var Pontoon = (function (my) {
 
       function markSelectedFilters(type) {
         for (var i=0, l=filter[type].length; i < l; i++) {
-          var node = $('#filter .menu [data-type="' + filter[type][i] + '"]'),
+          var node = $('#filter .menu .extended-list [data-type="' + filter[type][i] + '"]'),
               title = node.find('.title').text();
 
           node.addClass('selected');
@@ -1182,14 +1182,6 @@ var Pontoon = (function (my) {
       }
 
       var selectedCount = $('#filter .extended-list .selected').length;
-
-      // If only one filter selected, use it's own icon in the filter selector
-      if (selectedCount === 1) {
-        selectorType = $('#filter .selected').data('type');
-        if (selectorType.indexOf('@') !== -1) {
-          selectorType = 'author';
-        }
-      }
 
       // Update placeholder and filter selector icon
       $('#search').attr('placeholder', 'Search in ' + (placeholder.join(', ') || 'All'));
@@ -2923,7 +2915,8 @@ var Pontoon = (function (my) {
 
 
     /*
-     * Update authors list in extended filter menu */
+     * Update authors list in filter menu
+     */
 
     updateAuthors: function (authors) {
       var self = this,
@@ -2939,6 +2932,11 @@ var Pontoon = (function (my) {
                   '<span class="status fa"></span>' +
                   '<img class="rounded" src="' + this.gravatar_url + '">' +
                 '</span>' +
+                '<figcaption style="display:none">' +
+                  '<p class="name">' + this.display_name + '</p>' +
+                  '<p class="role">' + this.role + '</p>' +
+                '</figcaption>' +
+                '<span class="count">' + self.numberWithCommas(this.translation_count) + '</span>' +
                 '</figure>' +
             '</li>');
           });
