@@ -1,7 +1,6 @@
 import codecs
 import functools
 import json
-import logging
 import os
 import pytz
 import re
@@ -12,6 +11,9 @@ import time
 import zipfile
 
 from datetime import datetime, timedelta
+
+from django.utils.text import slugify
+from six import text_type
 from xml.sax.saxutils import (
     escape as xml_escape,
     quoteattr,
@@ -30,9 +32,6 @@ from translate.storage.placeables.interfaces import BasePlaceable
 from translate.lang import data as lang_data
 
 
-log = logging.getLogger('pontoon')
-
-
 def split_ints(s):
     """Splits string by comma and maps items to the integer."""
     integers = filter(None, (s or '').split(','))
@@ -48,7 +47,7 @@ def get_project_locale_from_request(request, locales):
     for a in accept:
         try:
             return locales.get(code__iexact=a[0]).code
-        except:
+        except BaseException:
             continue
 
 
@@ -168,7 +167,7 @@ def mark_placeables(text):
         # Placeable: mark
         if isinstance(item, BasePlaceable):
             class_name = item.__class__.__name__
-            placeable = unicode(item)
+            placeable = text_type(item)
 
             # CSS class used to mark the placeable
             css = {
@@ -203,7 +202,7 @@ def mark_placeables(text):
 
         # Not a placeable: skip
         else:
-            output += unicode(item).replace('<', '&lt;').replace('>', '&gt;')
+            output += text_type(item).replace('<', '&lt;').replace('>', '&gt;')
 
     return output
 
@@ -530,7 +529,7 @@ def handle_upload_content(slug, code, part, f, user):
         Prefetch(
             'translation_set',
             queryset=Translation.objects.filter(locale=locale, approved_date__lte=timezone.now()),
-            to_attr='old_translations'
+            to_attr='db_translations_approved_before_sync'
         )
     )
     entities_dict = {entity.key: entity for entity in entities_qs}
@@ -541,11 +540,12 @@ def handle_upload_content(slug, code, part, f, user):
             entity = entities_dict[key]
             changeset.update_entity_translations_from_vcs(
                 entity, locale.code, vcs_translation, user,
-                entity.db_translations, entity.old_translations
+                entity.db_translations, entity.db_translations_approved_before_sync
             )
 
     changeset.bulk_create_translations()
     changeset.bulk_update_translations()
+    changeset.bulk_create_translaton_memory_entries()
     TranslatedResource.objects.get(resource=resource, locale=locale).calculate_stats()
 
     # Mark translations as changed
@@ -554,7 +554,7 @@ def handle_upload_content(slug, code, part, f, user):
     for t in changeset.translations_to_create + changeset.translations_to_update:
         key = (t.entity.pk, t.locale.pk)
         # Remove duplicate changes to prevent unique constraint violation
-        if not key in existing:
+        if key not in existing:
             changed_entities[key] = ChangedEntityLocale(entity=t.entity, locale=t.locale)
 
     ChangedEntityLocale.objects.bulk_create(changed_entities.values())
@@ -631,6 +631,7 @@ def build_translation_memory_file(creation_date, locale_code, entries):
         }
     )
     for resource_path, key, source, target, project_name, project_slug in entries:
+        tuid = ':'.join((project_slug, slugify(resource_path), slugify(key)))
         yield (
             u'\n\t\t<tu tuid=%(tuid)s srclang="en-US">'
             u'\n\t\t\t<tuv xml:lang="en-US">'
@@ -640,7 +641,7 @@ def build_translation_memory_file(creation_date, locale_code, entries):
             u'\n\t\t\t\t<seg>%(target)s</seg>'
             u'\n\t\t\t</tuv>'
             u'\n\t\t</tu>' % {
-                'tuid': quoteattr('%s:%s:%s' % (project_slug, resource_path, key)),
+                'tuid': quoteattr(tuid),
                 'source': xml_escape(source),
                 'locale_code': quoteattr(locale_code),
                 'target': xml_escape(target),

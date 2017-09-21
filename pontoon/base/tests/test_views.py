@@ -220,10 +220,19 @@ class TranslateMemoryTests(ViewTestCase):
             'pk': memory_entry.entity.pk,
             'locale': memory_entry.locale.code
         })
-        assert_json(response, [{u'count': 3,
-                     u'quality': 75.0,
-                     u'source': u'abaa',
-                     u'target': u'ccc'}])
+
+        result = response.json()
+        src_string = result[0].pop('source')
+
+        assert_true(src_string in ('abaa', 'aaab', 'aaab'))
+        assert_equal(
+            result,
+            [{
+                u'count': 3,
+                u'quality': 75.0,
+                u'target': u'ccc',
+            }]
+        )
 
     def test_exclude_entity(self):
         """
@@ -295,6 +304,7 @@ class EntityViewTests(TestCase):
             'translated',
             'unchanged',
             'has-suggestions',
+            'rejected',
         )
 
         for filter_ in filters:
@@ -306,13 +316,13 @@ class EntityViewTests(TestCase):
                 'limit': 1,
             }
 
-            if filter_ == 'unchanged' or filter_ == 'has-suggestions':
+            if filter_ in ('unchanged', 'has-suggestions', 'rejected'):
                 params['extra'] = filter_
 
             else:
                 params['status'] = filter_
 
-            with patch('pontoon.base.models.Entity.objects.{}'.format(filter_name), return_value=getattr(Entity.objects, filter_name)()) as filter_mock:
+            with patch('pontoon.base.models.Entity.objects.{}'.format(filter_name), return_value=getattr(Entity.objects, filter_name)(self.locale, False)) as filter_mock:
                 self.client.ajax_post('/get-entities/', params)
                 assert_true(filter_mock.called)
 

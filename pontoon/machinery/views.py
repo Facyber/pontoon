@@ -1,26 +1,26 @@
 import logging
 import requests
-import urllib
 import xml.etree.ElementTree as ET
+from uuid import uuid4
+from six.moves.urllib.parse import quote
 
 from collections import defaultdict
 from django.conf import settings
 from django.db import DataError
-from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
-from django.shortcuts import get_object_or_404, render
+from django.http import HttpResponseBadRequest, JsonResponse
+from django.shortcuts import get_object_or_404, get_list_or_404, render
+from django.template.loader import get_template
 from django.utils.datastructures import MultiValueDictKeyError
-from suds.client import Client, WebFault
 
 from pontoon.base import utils
 from pontoon.base.models import Locale, TranslationMemoryEntry
 
 
-log = logging.getLogger('pontoon')
+log = logging.getLogger(__name__)
 
 
 def machinery(request):
-    locale = utils.get_project_locale_from_request(
-        request, Locale.objects) or 'en-GB'
+    locale = utils.get_project_locale_from_request(request, Locale.objects) or 'en-GB'
 
     return render(request, 'machinery/machinery.html', {
         'locale': Locale.objects.get(code=locale),
@@ -39,7 +39,12 @@ def translation_memory(request):
 
     max_results = 5
     locale = get_object_or_404(Locale, code=locale)
-    entries = TranslationMemoryEntry.objects.minimum_levenshtein_ratio(text).filter(locale=locale)
+    entries = (
+        TranslationMemoryEntry.objects
+        .minimum_levenshtein_ratio(text)
+        .filter(locale=locale)
+        .exclude(translation__approved=False, translation__fuzzy=False)
+    )
 
     # Exclude existing entity
     if pk:
@@ -50,65 +55,53 @@ def translation_memory(request):
 
     try:
         for entry in entries:
-            if entry['target'] not in suggestions or entry['quality'] > suggestions[entry['target']]['quality']:
+            if (
+                entry['target'] not in suggestions or
+                entry['quality'] > suggestions[entry['target']]['quality']
+            ):
                 suggestions[entry['target']].update(entry)
             suggestions[entry['target']]['count'] += 1
     except DataError as e:
         # Catches 'argument exceeds the maximum length of 255 bytes' Error
         return HttpResponseBadRequest('Bad Request: {error}'.format(error=e))
 
-    return JsonResponse(sorted(suggestions.values(), key=lambda e: e['count'], reverse=True)[:max_results], safe=False)
+    return JsonResponse(
+        sorted(suggestions.values(), key=lambda e: e['count'], reverse=True)[:max_results],
+        safe=False
+    )
 
 
 def machine_translation(request):
     """Get translation from machine translation service."""
     try:
         text = request.GET['text']
-        locale = request.GET['locale']
-        check = request.GET['check']
+        locale_code = request.GET['locale']
     except MultiValueDictKeyError as e:
         return HttpResponseBadRequest('Bad Request: {error}'.format(error=e))
 
-    if hasattr(settings, 'MICROSOFT_TRANSLATOR_API_KEY'):
-        api_key = settings.MICROSOFT_TRANSLATOR_API_KEY
-    else:
+    api_key = settings.MICROSOFT_TRANSLATOR_API_KEY
+
+    if not api_key:
         log.error("MICROSOFT_TRANSLATOR_API_KEY not set")
-        return HttpResponse("apikey")
+        return HttpResponseBadRequest("Missing api key.")
 
-    obj = {}
+    # Validate if locale exists in the database to avoid any potential XSS attacks.
+    get_list_or_404(Locale, ms_translator_code=locale_code)
 
-    # On first run, check if target language supported
-    if check == "true":
-        supported = False
-        languages = settings.MICROSOFT_TRANSLATOR_LOCALES
-
-        if locale in languages:
-            supported = True
-
-        else:
-            for lang in languages:
-                if lang.startswith(locale.split("-")[0]):  # Neutral locales
-                    supported = True
-                    locale = lang
-                    break
-
-        if not supported:
-            return HttpResponse("not-supported")
-
-        obj['locale'] = locale
-
+    obj = {
+        'locale': locale_code,
+    }
     url = "http://api.microsofttranslator.com/V2/Http.svc/Translate"
     payload = {
         "appId": api_key,
         "text": text,
         "from": "en",
-        "to": locale,
+        "to": locale_code,
         "contentType": "text/html",
     }
 
     try:
         r = requests.get(url, params=payload)
-
         # Parse XML response
         root = ET.fromstring(r.content)
         translation = root.text
@@ -124,70 +117,50 @@ def microsoft_terminology(request):
     """Get translations from Microsoft Terminology Service."""
     try:
         text = request.GET['text']
-        locale = request.GET['locale']
-        check = request.GET['check']
+        locale_code = request.GET['locale']
     except MultiValueDictKeyError as e:
         return HttpResponseBadRequest('Bad Request: {error}'.format(error=e))
 
+    # Validate if locale exists in the database to avoid any potential XSS attacks.
+    get_list_or_404(Locale, ms_terminology_code=locale_code)
+
     obj = {}
-    locale = locale.lower()
-    url = 'http://api.terminology.microsoft.com/Terminology.svc?singleWsdl'
-    client = Client(url)
-
-    # On first run, check if target language supported
-    if check == "true":
-        supported = False
-        languages = settings.MICROSOFT_TERMINOLOGY_LOCALES
-
-        if locale in languages:
-            supported = True
-
-        elif "-" not in locale:
-            temp = locale + "-" + locale  # Try e.g. "de-de"
-            if temp in languages:
-                supported = True
-                locale = temp
-
-            else:
-                for lang in languages:
-                    if lang.startswith(locale + "-"):  # Try e.g. "de-XY"
-                        supported = True
-                        locale = lang
-                        break
-
-        if not supported:
-            return HttpResponse("not-supported")
-
-        obj['locale'] = locale
-
-    sources = client.factory.create('ns0:TranslationSources')
-    sources["TranslationSource"] = ['Terms', 'UiStrings']
-
-    payload = {
-        'text': text,
-        'from': 'en-US',
-        'to': locale,
-        'sources': sources,
-        'maxTranslations': 5
+    url = 'http://api.terminology.microsoft.com/Terminology.svc'
+    headers = {
+        'SOAPAction': (
+            '"http://api.terminology.microsoft.com/terminology/Terminology/GetTranslations"'
+        ),
+        'Content-Type': 'text/xml; charset=utf-8'
     }
+    payload = {
+        'uuid': uuid4(),
+        'text': quote(text.encode('utf-8')),
+        'to': locale_code,
+        'max_result': 5
+    }
+    template = get_template('machinery/microsoft_terminology.jinja')
+
+    payload = template.render(payload)
 
     try:
-        r = client.service.GetTranslations(**payload)
+        r = requests.post(url, data=payload, headers=headers)
         translations = []
+        xpath = './/{http://api.terminology.microsoft.com/terminology}'
+        root = ET.fromstring(r.content)
+        results = root.find(xpath + 'GetTranslationsResult')
 
-        if len(r) != 0:
-            for translation in r.Match:
+        if results is not None:
+            for translation in results:
                 translations.append({
-                    'source': translation.OriginalText,
-                    'target': translation.Translations[0][0].TranslatedText,
-                    'quality': translation.ConfidenceLevel,
+                    'source': translation.find(xpath + 'OriginalText').text,
+                    'target': translation.find(xpath + 'TranslatedText').text,
+                    'quality': int(translation.find(xpath + 'ConfidenceLevel').text),
                 })
 
             obj['translations'] = translations
-
         return JsonResponse(obj)
 
-    except WebFault as e:
+    except requests.exceptions.RequestException as e:
         return HttpResponseBadRequest('Bad Request: {error}'.format(error=e))
 
 
@@ -200,7 +173,7 @@ def amagama(request):
         return HttpResponseBadRequest('Bad Request: {error}'.format(error=e))
 
     try:
-        text = urllib.quote(text.encode('utf-8'))
+        text = quote(text.encode('utf-8'))
     except KeyError as e:
         return HttpResponseBadRequest('Bad Request: {error}'.format(error=e))
 
@@ -233,7 +206,7 @@ def transvision(request):
         return HttpResponseBadRequest('Bad Request: {error}'.format(error=e))
 
     try:
-        text = urllib.quote(text.encode('utf-8'))
+        text = quote(text.encode('utf-8'))
     except KeyError as e:
         return HttpResponseBadRequest('Bad Request: {error}'.format(error=e))
 

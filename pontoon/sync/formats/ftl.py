@@ -21,11 +21,14 @@ log = logging.getLogger(__name__)
 parser = FluentParser()
 serializer = FluentSerializer()
 
+
 class FTLEntity(VCSTranslation):
     """
     Represents entities in FTL (without its attributes).
     """
-    def __init__(self, key, source_string, source_string_plural, strings, comments=None, order=None):
+    def __init__(
+        self, key, source_string, source_string_plural, strings, comments=None, order=None
+    ):
         super(FTLEntity, self).__init__(
             key=key,
             source_string=source_string,
@@ -78,14 +81,12 @@ class FTLResource(ParsedResource):
         for obj in self.structure.body:
             if type(obj) == ast.Message:
                 key = obj.id.name
-                translation = serializer.serialize_entry(obj)
 
-                # If syncing locale file
+                # Do not store translation comments in the database
                 if source_resource:
-                    split = translation.split('\n' + key + ' = ')
-                    if len(split) > 1:
-                        serialized_comment = split[0] + '\n'
-                        translation = translation[len(serialized_comment):]
+                    obj.comment = None
+
+                translation = serializer.serialize_entry(obj)
 
                 self.entities[key] = FTLEntity(
                     key,

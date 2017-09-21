@@ -28,3 +28,7 @@ tmp/*
 docs/_build
 venv
 /media/
+
+# For docker
+.docker-build
+docker/config/webapp.env

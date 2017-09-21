@@ -22,7 +22,7 @@ class UserProfileInline(admin.StackedInline):
     model = models.UserProfile
     max_num = 1
     can_delete = False
-    fields = ('quality_checks', 'force_suggestions',)
+    exclude = ('locales_order',)
     verbose_name_plural = 'Settings'
 
 
@@ -96,7 +96,8 @@ class RepositoryInline(admin.TabularInline):
     model = models.Repository
     extra = 0
     verbose_name_plural = 'Repositories'
-    fields = ('type', 'url', 'branch', 'website', 'permalink_prefix', 'last_synced_revisions', 'source_repo',)
+    fields = ('type', 'url', 'branch', 'website', 'permalink_prefix', 'last_synced_revisions',
+              'source_repo',)
 
 
 class SubpageInline(admin.TabularInline):

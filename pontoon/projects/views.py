@@ -1,4 +1,3 @@
-import logging
 import uuid
 
 from django.contrib.auth.models import User
@@ -17,9 +16,6 @@ from pontoon.base.models import Project
 from pontoon.base.utils import require_AJAX, split_ints
 from pontoon.contributors.views import ContributorsMixin
 from pontoon.projects import forms
-
-
-log = logging.getLogger('pontoon')
 
 
 def projects(request):
@@ -159,4 +155,4 @@ class ProjectContributorsView(ContributorsMixin, DetailView):
         return 'project'
 
     def contributors_filter(self, **kwargs):
-        return Q(translation__entity__resource__project=self.object)
+        return Q(entity__resource__project=self.object)

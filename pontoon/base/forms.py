@@ -1,6 +1,9 @@
 import os
 
+import bleach
+
 from django import forms
+from django.conf import settings
 
 from pontoon.base.models import (
     Locale,
@@ -9,6 +12,18 @@ from pontoon.base.models import (
     UserProfile
 )
 from pontoon.sync.formats import SUPPORTED_FORMAT_PARSERS
+
+
+class HtmlField(forms.CharField):
+    widget = forms.Textarea
+
+    def clean(self, value):
+        value = super(HtmlField, self).clean(value)
+        value = bleach.clean(
+            value, strip=True,
+            tags=settings.ALLOWED_TAGS, attributes=settings.ALLOWED_ATTRIBUTES
+        )
+        return value
 
 
 class NoTabStopCharField(forms.CharField):
@@ -38,7 +53,7 @@ class UploadFileForm(DownloadFileForm):
 
             # File size validation
             if uploadfile.size > limit * 1000:
-                current = round(uploadfile.size/1000)
+                current = round(uploadfile.size / 1000)
                 message = (
                     'Upload failed. Keep filesize under {limit} kB. Your upload: {current} kB.'
                     .format(limit=limit, current=current)
@@ -140,7 +155,10 @@ ProjectLocalePermsFormsSet = forms.modelformset_factory(
 )
 
 
-class UserProfileForm(forms.ModelForm):
+class UserFirstNameForm(forms.ModelForm):
+    """
+    Form is responsible for saving user's name.
+    """
     first_name = forms.RegexField(regex='^[^<>"\'&]+$', max_length=30, strip=True)
 
     class Meta:
@@ -148,7 +166,24 @@ class UserProfileForm(forms.ModelForm):
         fields = ('first_name',)
 
 
-class UserLocalesSettings(forms.ModelForm):
+class UserCustomHomepageForm(forms.ModelForm):
+    """
+    Form is responsible for saving custom home page.
+    """
+    class Meta:
+        model = UserProfile
+        fields = ('custom_homepage',)
+
+    def __init__(self, *args, **kwargs):
+        super(UserCustomHomepageForm, self).__init__(*args, **kwargs)
+        all_locales = list(Locale.objects.all().values_list('code', 'name'))
+
+        self.fields['custom_homepage'] = forms.ChoiceField(choices=[
+            ('', 'Default homepage')
+        ] + all_locales, required=False)
+
+
+class UserLocalesOrderForm(forms.ModelForm):
     """
     Form is responsible for saving preferred locales of contributor.
     """

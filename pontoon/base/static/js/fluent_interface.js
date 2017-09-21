@@ -43,20 +43,42 @@ var Pontoon = (function (my) {
             }
           ).get();
 
-          $.each(pluralForms, function(i) {
-            var example = i === 3 ? 5 : i+1,
-                value = isTranslated ? self.serializePlaceables(translation_ast.value.elements[0].variants[i].value.elements) : '';
+          if (translation_ast) {
+            var variants = translation_ast.value.elements[0].variants;
+          }
+
+          if (!Pontoon.locale.examples) {
+            Pontoon.generateLocalePluralExamples();
+          }
+
+          $.each(pluralForms, function(pluralForm) {
+            var value = '';
+
+            if (translation_ast) {
+              for (var i = 0; i < variants.length; i++) {
+                if (variants[i].key.name === this.toString()) {
+                  value = self.serializePlaceables(variants[i].value.elements);
+                  break;
+                }
+              }
+            }
+
             $('#ftl-area .main-value ul')
               .append(
                 '<li class="clearfix">' +
                   '<label class="id built-in" for="ftl-id-' + this + '">' +
-                    '<span>' + this + ' (e.g. </span><span class="stress">' + example + '</span>)<sub class="fa fa-remove remove" title="Remove"></sub>' +
+                    '<span>' + this + ' (e.g. </span><span class="stress">' + Pontoon.locale.examples[pluralForm] + '</span>)<sub class="fa fa-remove remove" title="Remove"></sub>' +
                   '</label>' +
                   '<input class="value" id="ftl-id-' + this + '" type="text" value="' + value + '">' +
                 '</li>');
           });
 
           $('#entity-value').parents('li').hide();
+
+
+        // Main Value
+        } else if (translation_ast && translation_ast.value) {
+          $('#ftl-area > .main-value #entity-value').val(self.serializePlaceables(translation_ast.value.elements));
         }
 
         // Attributes
@@ -66,7 +88,7 @@ var Pontoon = (function (my) {
 
         $.each(attributes, function() {
           id = this.id.name;
-          value = isTranslated ? this.value.elements[0].value : '';
+          value = isTranslated ? self.serializePlaceables(this.value.elements) : '';
 
           var maxlength = label = input = cls = '';
 
@@ -113,6 +135,15 @@ var Pontoon = (function (my) {
 
 
       /*
+       * Render editor with given translation
+       */
+      renderEditorWithTranslation: function (translation) {
+        Pontoon.fluent.renderEditor(translation);
+        Pontoon.fluent.focusFirstField();
+      },
+
+
+      /*
        * Serialize value with placeables into a simple strings
        */
       serializePlaceables: function (elements) {
@@ -155,7 +186,7 @@ var Pontoon = (function (my) {
           $('#ftl').addClass('active');
 
           this.renderEditor();
-          $('#ftl-area input.value:visible:first').focus();
+          this.focusFirstField();
 
         } else {
           $('#ftl-area').hide();
@@ -178,6 +209,9 @@ var Pontoon = (function (my) {
         var self = this,
             entity = Pontoon.getEditorEntity();
 
+        $('#original').show();
+        $('#ftl-original').hide();
+
         if (entity.format !== 'ftl') {
           return;
         }
@@ -194,7 +228,13 @@ var Pontoon = (function (my) {
               original += '</span></li>';
             });
 
-          } else if (obj.attributes) {
+          } else if (obj.value) {
+            original += '<li><span class="id">Value</span><span class="value">';
+            original += obj.value.elements[0].value;
+            original += '</span></li>';
+          }
+
+          if (obj.attributes) {
             var id, value;
             $.each(obj.attributes, function() {
               id = this.id.name;
@@ -218,10 +258,6 @@ var Pontoon = (function (my) {
 
           renderOriginal(ast);
           $('#ftl-original .main-value ul').append(original);
-
-        } else {
-          $('#original').show();
-          $('#ftl-original').hide();
         }
       },
 
@@ -241,20 +277,32 @@ var Pontoon = (function (my) {
 
           // Plurals
           if (entity.isFTLplural) {
-            value = '{ ' + '$num ->';
-            var variants = $('#ftl-area .main-value li:visible');
+            value = '';
+            var variants = $('#ftl-area .main-value li:visible'),
+                nonEmptyVariants = [],
+                def = '';
 
             variants.each(function(i) {
               var id = $(this).find('.id span:first').html().split(' ')[0],
-                  val = $(this).find('.value').val(),
-                  def = (i === (variants.length - 1)) ? '*' : '';
+                  val = $(this).find('.value').val();
 
               if (id && val) {
-                value += '\n  ' + def + '[' + id + '] ' + val;
+                nonEmptyVariants.push('[' + id + '] ' + val);
               }
             });
 
-            value += '\n  }';
+            for (var i = 0; i < nonEmptyVariants.length; i++) {
+              // Mark the last variant as default
+              // TODO: Should be removed by bug 1237667
+              if (i === nonEmptyVariants.length - 1) {
+                def = '*';
+              }
+              value += '\n  ' + def + nonEmptyVariants[i];
+            }
+
+            if (value) {
+              value = '{ $num ->' + value + '\n  }';
+            }
           }
 
           // Attributes
@@ -278,8 +326,31 @@ var Pontoon = (function (my) {
           translation = ' = ' + translation;
         }
 
-        var content = entity.key + translation;
-        return fluentSerializer.serializeEntry(fluentParser.parseEntry(content));
+        var content = entity.key + translation,
+            ast = fluentParser.parseEntry(content),
+            entityAst = fluentParser.parseEntry(entity.original),
+            error = null;
+
+        // Parse error
+        if (ast.type === 'Junk') {
+          error = ast.annotations[0].message;
+
+        // TODO: Should be removed by bug 1237667
+        // Detect missing values
+        } else if (entityAst && ast && entityAst.value && !ast.value) {
+          error = "Please make sure to fill in the value";
+        // Detect missing attributes
+        } else if (entityAst.attributes && ast.attributes && entityAst.attributes.length !== ast.attributes.length) {
+          error = "Please make sure to fill in all the attributes";
+        }
+
+        if (error) {
+          return {
+            error: error
+          };
+        }
+
+        return fluentSerializer.serializeEntry(ast);
       },
 
 
@@ -306,7 +377,7 @@ var Pontoon = (function (my) {
           } else {
             var attributes = ast.attributes;
             if (attributes && attributes.length) {
-              response = attributes[0].value.elements[0].value;
+              response = this.serializePlaceables(attributes[0].value.elements);
             }
           }
 
@@ -322,7 +393,7 @@ var Pontoon = (function (my) {
                 });
 
             if (isFTLplural) {
-              response = variants[0].value.elements[0].value;
+              response = this.serializePlaceables(variants[0].value.elements);
               entity.isFTLplural = true;
             }
           }
@@ -343,6 +414,14 @@ var Pontoon = (function (my) {
         }
 
         return response;
+      },
+
+
+      /*
+       * Focus first field of the FTL editor
+       */
+      focusFirstField: function(object, fallback, entity) {
+        $('#ftl-area input.value:visible:first').focus();
       }
 
     }
@@ -407,37 +486,6 @@ $(function() {
     if (accesskey) {
       $('.accesskeys div').removeClass('active');
       $('.accesskeys div:contains("' + accesskey + '")').addClass('active');
-    }
-  });
-
-  // Clear translation area
-  $('#clear').click(function (e) {
-    e.preventDefault();
-
-    if ($('#ftl').is('.active')) {
-      var translation = {
-        pk: null,
-        string: ''
-      };
-
-      Pontoon.fluent.renderEditor(translation);
-      $('#ftl-area input.value:visible:first').focus();
-    }
-  });
-
-  // Copy helpers result to translation
-  $('#helpers section').on('click', 'li:not(".disabled")', function (e) {
-    if ($('#ftl').is('.active')) {
-      e.preventDefault();
-
-      var translation = {
-        pk: $(this).data('id'),
-        string: this.string
-      };
-
-      $('#translation').val(''); // Invalidate main copy from helpers action
-      Pontoon.fluent.renderEditor(translation);
-      $('#ftl-area input.value:visible:first').focus();
     }
   });
 

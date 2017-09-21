@@ -52,7 +52,7 @@ var Pontoon = (function (my) {
         url: '/notifications/mark-all-as-read/',
         success: function() {
           $('#notifications.unread .button .icon').animate({color: '#4D5967'}, 1000);
-          var unreadNotifications = $('#main.notifications .right-column li.notification-item[data-unread="true"]');
+          var unreadNotifications = $('.notifications .menu ul.notification-list li.notification-item[data-unread="true"]');
 
           unreadNotifications.animate({backgroundColor: 'transparent'}, 1000, function() {
             // Remove inline style and unread mark to make hover work again
@@ -268,10 +268,12 @@ var Pontoon = (function (my) {
       var self = this,
           loader = loader || 'helpers li a[href="#machinery"]',
           ul = $('#helpers > .machinery').children('ul').empty(),
-          tab = $('#' + loader).addClass('loading'),
+          tab = $('#' + loader).addClass('loading'), // .loading class used on the /machinery page
           requests = 0,
           count = 0,
           sourcesMap = {};
+
+      self.NProgressUnbind();
 
       function append(data) {
         var title = loader !== 'search' ? ' title="Copy Into Translation (Tab)"' : ' title="Copy to clipboard"',
@@ -378,10 +380,11 @@ var Pontoon = (function (my) {
       function complete(jqXHR, status) {
         if (status !== "abort") {
           requests--;
-          tab.find('.count').html(count).toggle(count !== 0);
+          tab.find('.count').html(count).show();
           if (requests === 0) {
             tab.removeClass('loading');
             if (ul.children('li').length === 0) {
+              tab.find('.count').hide();
               ul.append('<li class="disabled">' +
                 '<p>No translations available.</p>' +
               '</li>');
@@ -389,9 +392,6 @@ var Pontoon = (function (my) {
           }
         }
       }
-
-      // Reset count
-      tab.find('.count').html('').hide();
 
       // Translation memory
       requests++;
@@ -425,7 +425,7 @@ var Pontoon = (function (my) {
       }).error(error).complete(complete);
 
       // Machine translation
-      if (self.locale.mt !== false) {
+      if (self.locale.ms_translator_code.length) {
         requests++;
 
         if (self.XHRmachineTranslation) {
@@ -436,17 +436,9 @@ var Pontoon = (function (my) {
           url: '/machine-translation/',
           data: {
             text: original,
-            // On first run, check if target locale supported
-            check: (self.locale.mt === undefined) ? true : false,
-            // Use MT locale, Pontoon's might not be supported
-            locale: (self.locale.mt === undefined) ?
-                    self.locale.code : self.locale.mt
+            locale: self.locale.ms_translator_code
           }
-
         }).success(function(data) {
-          if (data.locale) {
-            self.locale.mt = data.locale;
-          }
           if (data.translation) {
             append({
               url: 'http://www.bing.com/translator',
@@ -454,14 +446,12 @@ var Pontoon = (function (my) {
               source: 'Machine Translation',
               translation: data.translation
             });
-          } else if (data === "not-supported") {
-            self.locale.mt = false;
           }
         }).error(error).complete(complete);
       }
 
       // Microsoft Terminology
-      if (self.locale.msTerminology !== false) {
+      if (self.locale.ms_terminology_code.length) {
         requests++;
 
         if (self.XHRmicrosoftTerminology) {
@@ -472,32 +462,21 @@ var Pontoon = (function (my) {
           url: '/microsoft-terminology/',
           data: {
             text: original,
-            // On first run, check if target locale supported
-            check: (self.locale.msTerminology === undefined) ? true : false,
-            // Use Microsoft Terminology locale, Pontoon's might not be supported
-            locale: (self.locale.msTerminology === undefined) ?
-                    self.locale.code : self.locale.msTerminology
+            locale: self.locale.ms_terminology_code
           }
 
         }).success(function(data) {
-          if (data.locale) {
-            self.locale.msTerminology = data.locale;
-          }
-          if (data.translations) {
-            $.each(data.translations, function() {
-              append({
-                original: this.source,
-                quality: Math.round(this.quality) + '%',
-                url: 'https://www.microsoft.com/Language/en-US/Search.aspx?sString=' + this.source + '&langID=' + self.locale.msTerminology,
-                title: 'Visit Microsoft Terminology Service API.\n' +
-                       '© 2014 Microsoft Corporation. All rights reserved.',
-                source: 'Microsoft',
-                translation: this.target
-              });
+          $.each(data.translations, function() {
+            append({
+              original: this.source,
+              quality: Math.round(this.quality) + '%',
+              url: 'https://www.microsoft.com/Language/en-US/Search.aspx?sString=' + this.source + '&langID=' + self.locale.ms_terminology_code,
+              title: 'Visit Microsoft Terminology Service API.\n' +
+                     '© 2014 Microsoft Corporation. All rights reserved.',
+              source: 'Microsoft',
+              translation: this.target
             });
-          } else if (data === "not-supported") {
-            self.locale.msTerminology = false;
-          }
+          });
         }).error(error).complete(complete);
       }
 
@@ -531,37 +510,40 @@ var Pontoon = (function (my) {
       }).error(error).complete(complete);
 
       // Transvision
-      requests++;
+      if (self.locale.transvision) {
+        requests++;
 
-      if (self.XHRtransvision) {
-        self.XHRtransvision.abort();
+        if (self.XHRtransvision) {
+          self.XHRtransvision.abort();
+        }
+
+        self.XHRtransvision = $.ajax({
+          url: '/transvision/',
+          data: {
+            text: original,
+            locale: self.locale.code
+          }
+
+        }).success(function(data) {
+          if (data) {
+            $.each(data, function() {
+              append({
+                original: this.source,
+                quality: Math.round(this.quality) + '%',
+                url: 'https://transvision.mozfr.org/?repo=global' +
+                     '&recherche=' + encodeURIComponent(original) +
+                     '&locale=' + self.locale.code,
+                title: 'Visit Transvision',
+                source: 'Mozilla',
+                translation: this.target
+              });
+            });
+          }
+        }).error(error).complete(complete);
       }
 
-      self.XHRtransvision = $.ajax({
-        url: '/transvision/',
-        data: {
-          text: original,
-          locale: self.locale.code
-        }
-
-      }).success(function(data) {
-        if (data) {
-          $.each(data, function() {
-            append({
-              original: this.source,
-              quality: Math.round(this.quality) + '%',
-              url: 'https://transvision.mozfr.org/?repo=global' +
-                   '&recherche=' + encodeURIComponent(original) +
-                   '&locale=' + self.locale.code,
-              title: 'Visit Transvision',
-              source: 'Mozilla',
-              translation: this.target
-            });
-          });
-        }
-      }).error(error).complete(complete);
+      self.NProgressBind();
     }
-
   });
 }(Pontoon || {}));
 

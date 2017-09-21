@@ -1,14 +1,17 @@
+from __future__ import unicode_literals
 from __future__ import division
 
 import hashlib
+import json
 import logging
 import math
 import os.path
 import re
-import urllib
 
 from collections import defaultdict
 from dirtyfields import DirtyFieldsMixin
+from six.moves import reduce
+from six.moves.urllib.parse import (urlencode, urlparse)
 
 from django.conf import settings
 from django.contrib.auth.models import User, Group, UserManager
@@ -20,6 +23,7 @@ from django.db import models
 from django.db.models import Case, Count, F, Prefetch, Q, Sum, When
 from django.templatetags.static import static
 from django.utils import timezone
+from django.utils.encoding import python_2_unicode_compatible
 from django.utils.functional import cached_property
 
 from guardian.shortcuts import get_objects_for_user
@@ -35,107 +39,104 @@ from pontoon.base import utils
 from pontoon.db import IContainsCollate  # noqa
 from pontoon.sync import KEY_SEPARATOR
 
-from urlparse import urlparse
+
+log = logging.getLogger(__name__)
 
 
-log = logging.getLogger('pontoon')
-
-
-# User class extensions
 class UserTranslationsManager(UserManager):
-    """
-    Provides various method to interact with larger sets of translations and their stats for user.
-    """
-
-    def _changed_translations_count(self, *args):
-        """
-        Helper method, returns expression object which allows us to annotate querysets
-        with counts of translations.
-        """
-        translation_query = (
-            ~Q(translation__string=F('translation__entity__string'))
-            & ~Q(translation__string=F('translation__entity__string_plural'))
-            & Q(translation__user__isnull=False)
-        )
-        for arg in args:
-            translation_query &= arg
-
-        # For each translation that matches the filter, return 1. Aggregate
-        # the sum of all those results to count the number of matching
-        # translations.
-        return Sum(
-            Case(
-                When(translation_query, then=1), output_field=models.IntegerField(), default=0))
-
     def with_translation_counts(self, start_date=None, query_filters=None, limit=100):
         """
-        Returns contributors list, sorted by count of their translations.
-        Every user instance has added following properties:
+        Returns contributors list, sorted by count of their translations. Every user instance has
+        the following properties:
         * translations_count
         * translations_approved_count
         * translations_unapproved_count
         * translations_needs_work_count
-        Method has been created mainly to improve performance and to optimize
-        count of sql queries during generation of metrics.
+        * user_role
+
         All counts will be returned from start_date to now().
         :param date start_date: start date for translations.
         :param django.db.models.Q query_filters: filters contributors by given query_filters.
         :param int limit: limit results to this number.
         """
-        def translations_count(query=None):
-            """Short helper to avoid duplication of passing dates."""
-            query = query or Q()
-            if start_date:
-                query &= Q(translation__date__gte=start_date)
 
-            if query_filters:
-                query &= query_filters
+        # Collect data for faster user stats calculation.
+        user_stats = {}
+        translations = Translation.objects.exclude(user=None)
 
-            return self._changed_translations_count(query)
+        if start_date:
+            translations = translations.filter(date__gte=start_date)
+        if query_filters:
+            translations = translations.filter(query_filters)
 
-        def extract_locale(name):
-            """Extract locale code from group name."""
-            name = name.split(' ')[0]
-            if '/' in name:
-                name = name.split('/')[1]
-            return name
-
-        def with_roles(self):
-            """Add user roles."""
-            managers = defaultdict(set)
-            manager_groups = Group.objects.filter(name__endswith='managers').prefetch_related('user_set')
-
-            for group in manager_groups:
-                for user in group.user_set.all():
-                    managers[user].add(extract_locale(group.name))
-
-            translators = defaultdict(set)
-            translator_groups = Group.objects.filter(name__endswith='translators').prefetch_related('user_set')
-            for group in translator_groups:
-                for user in group.user_set.all():
-                    translators[user].add(extract_locale(group.name))
-
-            for contributor in self:
-                contributor.user_role = contributor.role(managers, translators)
-
-            return self
-
-        return with_roles(
-            self
-            .exclude(email__in=settings.EXCLUDE)
-            .annotate(translations_count=translations_count(),
-                      translations_approved_count=translations_count(Q(translation__approved=True)),
-                      translations_unapproved_count=translations_count(Q(translation__approved=False, translation__fuzzy=False)),
-                      translations_needs_work_count=translations_count(Q(translation__fuzzy=True)))
-            .exclude(translations_count=0)
-            .distinct().order_by('-translations_count')[:limit]
+        translations = (
+            translations
+            .values('user', 'approved', 'fuzzy')
+            .annotate(count=Count('user'))
         )
+
+        for translation in translations:
+            count = translation['count']
+            user = translation['user']
+
+            if translation['approved']:
+                status = 'approved'
+            elif translation['fuzzy']:
+                status = 'fuzzy'
+            else:
+                status = 'suggested'
+
+            if user not in user_stats:
+                user_stats[user] = {
+                    'total': 0,
+                    'approved': 0,
+                    'suggested': 0,
+                    'fuzzy': 0,
+                }
+
+            user_stats[user]['total'] += count
+            user_stats[user][status] += count
+
+        # Collect data for faster user role detection.
+        managers = defaultdict(set)
+        translators = defaultdict(set)
+
+        locales = Locale.objects.prefetch_related(
+            Prefetch(
+                'managers_group__user_set',
+                to_attr='fetched_managers'
+            ),
+            Prefetch(
+                'translators_group__user_set',
+                to_attr='fetched_translators'
+            )
+        )
+
+        for locale in locales:
+            for user in locale.managers_group.fetched_managers:
+                managers[user].add(locale.code)
+            for user in locale.translators_group.fetched_translators:
+                translators[user].add(locale.code)
+
+        # Assign properties to user objects.
+        contributors = self.filter(pk__in=user_stats.keys())
+
+        for contributor in contributors:
+            user = user_stats[contributor.pk]
+            contributor.translations_count = user['total']
+            contributor.translations_approved_count = user['approved']
+            contributor.translations_unapproved_count = user['suggested']
+            contributor.translations_needs_work_count = user['fuzzy']
+            contributor.user_role = contributor.role(managers, translators)
+
+        return sorted(contributors, key=lambda x: -x.translations_count)[:100]
 
 
 class UserCustomManager(UserManager):
     """
-    Django migrations is able to migrate managers, and throws an error if we directly call UserManager.from_queryset():
-        Please note that you need to inherit from managers you dynamically generated with 'from_queryset()'.
+    Django migrations is able to migrate managers, and throws an error if we directly call
+    UserManager.from_queryset(): Please note that you need to inherit from managers you dynamically
+    generated with 'from_queryset()'.
     """
     use_in_migrations = False
 
@@ -196,7 +197,7 @@ def user_gravatar_url(self, size):
         data['d'] = settings.SITE_URL + static('img/anon' + append + '.jpg')
 
     return '//www.gravatar.com/avatar/{email}?{data}'.format(
-        email=email, data=urllib.urlencode(data))
+        email=email, data=urlencode(data))
 
 
 @property
@@ -297,12 +298,25 @@ def user_locale_role(self, locale):
 @property
 def contributed_translations(self):
     """Filtered contributions provided by user."""
-    translations = (
-        Translation.objects.filter(user=self)
-            .exclude(string=F('entity__string'))
-            .exclude(string=F('entity__string_plural'))
-    )
-    return translations
+    return Translation.objects.filter(user=self)
+
+
+@property
+def top_contributed_locale(self):
+    """Locale the user has made the most contributions to."""
+    try:
+        return (
+            self.translation_set
+                .values('locale__code')
+                .annotate(total=Count('locale__code'))
+                .distinct()
+                .order_by('-total')
+                .first()['locale__code']
+        )
+    except TypeError:
+        # This error is raised if `top_contribution` is null. That happens if the user
+        # has never contributed to any locales.
+        return None
 
 
 def can_translate(self, locale, project):
@@ -319,6 +333,18 @@ def can_translate(self, locale, project):
     return self.has_perm('base.can_translate_locale', locale)
 
 
+@property
+def menu_notifications(self):
+    """A list of notifications to display in the notifications menu."""
+    unread_count = self.notifications.unread().count()
+    count = settings.NOTIFICATIONS_MAX_COUNT
+
+    if unread_count > count:
+        count = unread_count
+
+    return self.notifications.prefetch_related('actor', 'target')[:count]
+
+
 User.add_to_class('profile_url', user_profile_url)
 User.add_to_class('gravatar_url', user_gravatar_url)
 User.add_to_class('name_or_email', user_name_or_email)
@@ -333,17 +359,22 @@ User.add_to_class('locale_role', user_locale_role)
 User.add_to_class('translators', UserTranslationsManager())
 User.add_to_class('objects', UserCustomManager.from_queryset(UserQuerySet)())
 User.add_to_class('contributed_translations', contributed_translations)
+User.add_to_class('top_contributed_locale', top_contributed_locale)
 User.add_to_class('can_translate', can_translate)
+User.add_to_class('menu_notifications', menu_notifications)
 
 
 class UserProfile(models.Model):
     # This field is required.
     user = models.OneToOneField(User, related_name='profile')
-    # Other fields here
+    # Other fields here.
     quality_checks = models.BooleanField(default=True)
     force_suggestions = models.BooleanField(default=False)
 
-    """Defines the order of locales displayed in locale tab."""
+    # Used to redirect a user to a custom team page.
+    custom_homepage = models.CharField(max_length=10, blank=True, null=True)
+
+    # Defines the order of locales displayed in locale tab.
     locales_order = ArrayField(
         models.PositiveIntegerField(),
         default=list,
@@ -375,18 +406,11 @@ class AggregatedStats(models.Model):
         """
         Get sum of stats for all items in the queryset.
         """
-        stats = qs.aggregate(
-            Sum('total_strings'),
-            Sum('approved_strings'),
-            Sum('translated_strings'),
-            Sum('fuzzy_strings'),
-        )
-
         return cls(
-            total_strings=stats['total_strings__sum'],
-            approved_strings=stats['approved_strings__sum'],
-            translated_strings=stats['translated_strings__sum'],
-            fuzzy_strings=stats['fuzzy_strings__sum'],
+            total_strings=sum(x.total_strings for x in qs),
+            approved_strings=sum(x.approved_strings for x in qs),
+            translated_strings=sum(x.translated_strings for x in qs),
+            fuzzy_strings=sum(x.fuzzy_strings for x in qs),
         )
 
     @classmethod
@@ -395,12 +419,14 @@ class AggregatedStats(models.Model):
         Get top instances in the queryset.
         """
         return {
-            'most_strings': qs.order_by('-total_strings')[0],
-            'most_translations': qs.order_by('-approved_strings')[0],
-            'most_suggestions': qs.order_by('-translated_strings')[0],
-            'most_missing': qs.annotate(
-                missing=F('total_strings') - F('approved_strings') - F('translated_strings') - F('fuzzy_strings')
-            ).order_by('-missing')[0],
+            'most_strings': sorted(qs, key=lambda x: x.total_strings)[-1],
+            'most_translations': sorted(qs, key=lambda x: x.approved_strings)[-1],
+            'most_suggestions': sorted(qs, key=lambda x: x.translated_strings)[-1],
+            'most_missing': sorted(
+                qs,
+                key=lambda x:
+                    x.total_strings - x.approved_strings - x.translated_strings - x.fuzzy_strings
+            )[-1],
         }
 
     def adjust_stats(self, total_strings_diff, approved_strings_diff,
@@ -438,7 +464,7 @@ class LocaleQuerySet(models.QuerySet):
         """
         Available locales have at least one TranslatedResource defined.
         """
-        return self.filter(translatedresources__isnull=False).distinct()
+        return self.filter(pk__in=TranslatedResource.objects.values_list('locale', flat=True))
 
     def prefetch_project_locale(self, project):
         """
@@ -468,8 +494,52 @@ class LocaleQuerySet(models.QuerySet):
         return AggregatedStats.get_top_instances(self)
 
 
+@python_2_unicode_compatible
 class Locale(AggregatedStats):
     code = models.CharField(max_length=20, unique=True)
+
+    # Codes related to Microsoft products.
+    ms_translator_code = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="""
+        Microsoft Translator maintains its own list of
+        <a href="https://msdn.microsoft.com/en-us/library/hh456380.aspx">supported locales</a>.
+        Choose a locale from that list that's is the closest match or leave it blank to disable
+        support for Microsoft Translator.
+        """
+    )
+    ms_terminology_code = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="""
+        Microsoft Terminology uses language codes that include both the language and
+        the country/region. Chose a matching locale from the list or leave blank to disable support
+        for Microsoft terminology:
+
+        af-za, am-et, ar-dz, ar-eg, ar-sa, as-in, az-latn-az, be-by, bg-bg, bn-bd, bn-in,
+        bs-cyrl-ba, bs-latn-ba, ca-es, ca-es-valencia, chr-cher-us, cs-cz, cy-gb, da-dk, de-at,
+        de-ch, de-de, el-gr, en-au, en-ca, en-gb, en-hk, en-ie, en-in, en-my, en-ng, en-nz, en-ph,
+        en-pk, en-sg, en-tt, en-us, en-za, es-ar, es-bo, es-cl, es-co, es-cr, es-do, es-ec, es-es,
+        es-gt, es-hn, es-mx, es-ni, es-pa, es-pe, es-pr, es-py, es-sv, es-us, es-uy, es-ve, et-ee,
+        eu-es, fa-ir, fi-fi, fil-ph, fo-fo, fr-be, fr-ca, fr-ch, fr-dz, fr-fr, fr-ma, fr-tn,
+        fuc-latn-sn, ga-ie, gd-gb, gl-es, gu-in, guc-ve, ha-latn-ng, he-il, hi-in, hr-hr, hu-hu,
+        hy-am, id-id, ig-ng, is-is, it-ch, it-it, iu-latn-ca, ja-jp, ka-ge, kk-kz, km-kh, kn-in,
+        ko-kr, kok-in, ku-arab-iq, ky-kg, lb-lu, lo-la, lt-lt, lv-lv, mi-nz, mk-mk, ml-in, mn-mn,
+        mr-in, ms-bn, ms-my, mt-mt, my-mm, nb-no, ne-np, nl-be, nl-nl, nn-no, nso-za, or-in,
+        pa-arab-pk, pa-in, pl-pl, prs-af, ps-af, pt-br, pt-pt, quc-latn-gt, quz-pe, ro-md, ro-ro,
+        ru-kz, ru-ru, rw-rw, sd-arab-pk, si-lk, sk-sk, sl-si, sp-xl, sq-al, sr-cyrl-ba, sr-cyrl-rs,
+        sr-latn-me, sr-latn-rs, sv-se, sw-ke, ta-in, te-in, tg-cyrl-tj, th-th, ti-et, tk-tm, tl-ph,
+        tn-za, tr-tr, tt-ru, ug-cn, uk-ua, ur-pk, uz-cyrl-uz, uz-latn-uz, vi-vn, wo-sn, xh-za,
+        yo-ng, zh-cn, zh-hk, zh-sg, zh-tw, zu-za
+        """
+    )
+
+    transvision = models.BooleanField(default=False, help_text="""
+        Enable Machinery suggestions from <a href="https://transvision.mozfr.org/">Transvision</a>.
+        Only useful for locales that don't translate all projects on Pontoon.
+    """)
+
     db_collation = models.CharField(
         max_length=20,
         blank=True,
@@ -486,7 +556,9 @@ class Locale(AggregatedStats):
         blank=True,
         help_text="""
         Plural rule is part of the plurals header in
-        <a href="https://www.gnu.org/software/gettext/manual/gettext.html#Plural-forms">Gettext PO files</a>,
+        <a href="https://www.gnu.org/software/gettext/manual/gettext.html#Plural-forms">
+        Gettext PO files
+        </a>,
         that follows the <i>plural=</i> string, without the trailing semicolon.
         E.g. (n != 1)
         """
@@ -494,10 +566,18 @@ class Locale(AggregatedStats):
 
     # Locale contains references to user groups that translate or manage them.
     # Groups store respective permissions for users.
-    translators_group = models.ForeignKey(Group, related_name='translated_locales', null=True,
-        on_delete=models.SET_NULL)
-    managers_group = models.ForeignKey(Group, related_name='managed_locales', null=True,
-        on_delete=models.SET_NULL)
+    translators_group = models.ForeignKey(
+        Group,
+        related_name='translated_locales',
+        null=True,
+        on_delete=models.SET_NULL
+    )
+    managers_group = models.ForeignKey(
+        Group,
+        related_name='managed_locales',
+        null=True,
+        on_delete=models.SET_NULL
+    )
 
     # CLDR Plurals
     CLDR_PLURALS = (
@@ -576,7 +656,7 @@ class Locale(AggregatedStats):
             ('can_manage_locale', 'Can manage locale')
         )
 
-    def __unicode__(self):
+    def __str__(self):
         return self.name
 
     def serialize(self):
@@ -588,6 +668,9 @@ class Locale(AggregatedStats):
             'cldr_plurals': self.cldr_id_list(),
             'direction': self.direction,
             'script': self.script,
+            'ms_translator_code': self.ms_translator_code,
+            'ms_terminology_code': self.ms_terminology_code,
+            'transvision': json.dumps(self.transvision),
         }
 
     def cldr_id_list(self):
@@ -654,7 +737,7 @@ class Locale(AggregatedStats):
                     'project__slug',
                     'translators_group__pk',
                     'has_custom_translators'
-                )
+            )
         )
 
         projects_translators = create_users_map(
@@ -774,8 +857,8 @@ class Locale(AggregatedStats):
             else:
                 locale_pages = (
                     pages
-                        .filter(project__resources__translatedresources__locale=self)
-                        .exclude(project__resources__total_strings=0)
+                    .filter(project__resources__translatedresources__locale=self)
+                    .exclude(project__resources__total_strings=0)
                 )
                 details = get_details(
                     locale_pages.annotate(
@@ -861,6 +944,7 @@ PRIORITY_CHOICES = (
 )
 
 
+@python_2_unicode_compatible
 class Project(AggregatedStats):
     name = models.CharField(max_length=128, unique=True)
     slug = models.SlugField(unique=True)
@@ -917,7 +1001,7 @@ class Project(AggregatedStats):
             ("can_manage_project", "Can manage project"),
         )
 
-    def __unicode__(self):
+    def __str__(self):
         return self.name
 
     def serialize(self):
@@ -952,8 +1036,7 @@ class Project(AggregatedStats):
             for locale in self.locales.all():
                 locale.aggregate_stats()
 
-    @property
-    def changed_resources(self):
+    def changed_resources(self, now):
         """
         Returns a map of resource paths and their locales
         that where changed from the last sync.
@@ -961,8 +1044,8 @@ class Project(AggregatedStats):
         resources = defaultdict(set)
         changes = (
             ChangedEntityLocale.objects
-                .filter(entity__resource__project=self)
-                .prefetch_related('locale', 'entity__resource')
+            .filter(entity__resource__project=self, when__lte=now)
+            .prefetch_related('locale', 'entity__resource')
         )
 
         for change in changes:
@@ -1094,6 +1177,7 @@ class Project(AggregatedStats):
             return paths
 
 
+@python_2_unicode_compatible
 class ExternalResource(models.Model):
     """
     Represents links to external project resources like staging websites,
@@ -1107,7 +1191,7 @@ class ExternalResource(models.Model):
     name = models.CharField(max_length=32)
     url = models.URLField("URL", blank=True)
 
-    def __unicode__(self):
+    def __str__(self):
         return self.name
 
 
@@ -1337,6 +1421,41 @@ class Repository(models.Model):
         """True if we can commit strings back to this repo."""
         return self.type in ('svn', 'git', 'hg')
 
+    @cached_property
+    def api_config(self):
+        """
+        Repository API configuration consists of:
+        - Endpoint: A URL pattern to get repository metadata from. Used during sync for faster
+          retrieval of latest commit hashes in combination with the Key.
+          Supports {locale_code} wildcard.
+        - Key: A string used to retrieve the latest commit hash from the JSON response.
+        """
+        url = self.url
+
+        if url.startswith('ssh://hg.mozilla.org/'):
+            parsed_url = urlparse(url)
+            endpoint = (
+                'https://{netloc}/{path}/json-rev/default'
+                .format(netloc=parsed_url.netloc, path=parsed_url.path.strip('/'))
+            )
+            return {
+                'endpoint': endpoint,
+                'get_key': lambda x: x['node'],
+            }
+
+        if url.startswith('ssh://hg@bitbucket.org/'):
+            parsed_url = urlparse(url)
+            endpoint = (
+                'https://api.bitbucket.org/2.0/repositories/{path}/commit/default'
+                .format(path=parsed_url.path.strip('/'))
+            )
+            return {
+                'endpoint': endpoint,
+                'get_key': lambda x: x['hash'],
+            }
+
+        return None
+
     def locale_checkout_path(self, locale):
         """
         Path where the checkout for the given locale for this repo is
@@ -1371,7 +1490,7 @@ class Repository(models.Model):
 
         raise ValueError('No repo found for path: {0}'.format(path))
 
-    def pull(self, skip_locales=None):
+    def pull(self, locales=None):
         """
         Pull changes from VCS. Returns the revision(s) of the repo after
         pulling.
@@ -1383,8 +1502,9 @@ class Repository(models.Model):
             }
         else:
             current_revisions = {}
-            skip_locales = skip_locales or []
-            for locale in self.project.locales.exclude(code__in=skip_locales):
+            locales = locales or self.project.locales.all()
+
+            for locale in locales:
                 repo_type = self.type
                 url = self.locale_url(locale)
                 checkout_path = self.locale_checkout_path(locale)
@@ -1412,6 +1532,7 @@ class Repository(models.Model):
     Set last_synced_revisions to a dictionary of revisions
     that are currently downloaded on the disk.
     """
+
     def set_last_synced_revisions(self, locales=None):
         current_revisions = {}
 
@@ -1440,6 +1561,7 @@ class Repository(models.Model):
     """
     Get revision from the last_synced_revisions dictionary if exists.
     """
+
     def get_last_synced_revisions(self, locale=None):
         if self.last_synced_revisions:
             key = locale or 'single_locale'
@@ -1459,12 +1581,14 @@ class ResourceQuerySet(models.QuerySet):
     """
     List of paths to remove translations of obsolete entities from
     """
+
     def obsolete_entities_paths(self, obsolete_vcs_entities):
         return self.filter(
             entities__pk__in=obsolete_vcs_entities
         ).asymmetric().values_list('path', flat=True).distinct()
 
 
+@python_2_unicode_compatible
 class Resource(models.Model):
     project = models.ForeignKey(Project, related_name='resources')
     path = models.TextField()  # Path to localization file
@@ -1500,7 +1624,7 @@ class Resource(models.Model):
         """Return True if this resource is in an asymmetric format."""
         return self.format in self.ASYMMETRIC_FORMATS
 
-    def __unicode__(self):
+    def __str__(self):
         return '%s: %s' % (self.project.name, self.path)
 
     def save(self, *args, **kwargs):
@@ -1525,13 +1649,14 @@ class Resource(models.Model):
             return path_format
 
 
+@python_2_unicode_compatible
 class Subpage(models.Model):
     project = models.ForeignKey(Project)
     name = models.CharField(max_length=128)
     url = models.URLField("URL", blank=True)
     resources = models.ManyToManyField(Resource, blank=True)
 
-    def __unicode__(self):
+    def __str__(self):
         return self.name
 
 
@@ -1540,29 +1665,41 @@ class EntityQuerySet(models.QuerySet):
     Queryset provides a set of additional methods that should allow us to filter entities.
     """
     user_entity_filters = ('missing', 'fuzzy', 'suggested', 'translated')
-    user_extra_filters = ('has-suggestions', 'unchanged')
+    user_extra_filters = ('has-suggestions', 'rejected', 'unchanged')
 
-    def filter_statuses(self, locale, statuses):
+    def filter_statuses(self, locale, statuses, no_plurals):
         sanitized_statuses = filter(lambda s: s in self.user_entity_filters, statuses)
         if sanitized_statuses:
-            return reduce(lambda x, y: x | y, [getattr(Entity.objects, s)() for s in sanitized_statuses])
+            return reduce(
+                lambda x, y: x | y,
+                [getattr(Entity.objects, s)(locale, no_plurals) for s in sanitized_statuses]
+            )
         return Q()
 
-    def filter_extra(self, locale, extra):
+    def filter_extra(self, locale, extra, no_plurals):
         sanitized_extras = filter(lambda f: f in self.user_extra_filters, extra)
 
         if sanitized_extras:
-            return reduce(lambda x, y: x | y, [getattr(Entity.objects, s.replace('-', '_'))() for s in sanitized_extras])
+            return reduce(
+                lambda x, y: x | y,
+                [getattr(Entity.objects, s.replace('-', '_'))(locale, no_plurals) for s in sanitized_extras]
+            )
         return Q()
 
     def with_status_counts(self, locale):
         """
         Helper method that returns a set with annotation of following fields:
             * approved_count - a number of approved translations in the entity.
-            * fuzzy_count - a number of fuzzy translations in the antity
-            * suggested_count - a number of translations assigned do the entity.
-            * expected_count - a number of translations that should cover entity.
-            * unchanged_count - a number of translations that have the same string as the entity.
+            * fuzzy_count - a number of fuzzy translations in the entity.
+            * suggested_count - a number of suggested translations in the
+              entity.
+            * unreviewed_count - a number of translations in the entity that
+              have not yet been approved or rejected.
+            * rejected_count - a number of rejected translations in the entity.
+            * expected_count - a number of translations that should cover
+              entity.
+            * unchanged_count - a number of translations that have the same
+              string as the entity.
         """
         return self.annotate(
             approved_count=Sum(
@@ -1582,8 +1719,45 @@ class EntityQuerySet(models.QuerySet):
             suggested_count=Sum(
                 Case(
                     When(
-                        Q(translation__locale=locale, translation__approved=False, translation__fuzzy=False), then=1
-                    ), output_field=models.IntegerField(), default=0
+                        Q(
+                            translation__locale=locale,
+                            translation__approved=False,
+                            translation__fuzzy=False,
+                        ),
+                        then=1
+                    ),
+                    output_field=models.IntegerField(),
+                    default=0
+                )
+            ),
+            unreviewed_count=Sum(
+                Case(
+                    When(
+                        Q(
+                            translation__locale=locale,
+                            translation__approved=False,
+                            translation__fuzzy=False,
+                            translation__rejected=False,
+                        ),
+                        then=1
+                    ),
+                    output_field=models.IntegerField(),
+                    default=0
+                )
+            ),
+            rejected_count=Sum(
+                Case(
+                    When(
+                        Q(
+                            translation__locale=locale,
+                            translation__approved=False,
+                            translation__fuzzy=False,
+                            translation__rejected=True,
+                        ),
+                        then=1
+                    ),
+                    output_field=models.IntegerField(),
+                    default=0
                 )
             ),
             expected_count=Case(
@@ -1594,30 +1768,72 @@ class EntityQuerySet(models.QuerySet):
             unchanged_count=Sum(
                 Case(
                     When(
-                    Q(translation__locale=locale, translation__string=F('string')) |\
-                    Q(translation__locale=locale, translation__plural_form__gt=-1,
-                        translation__plural_form__isnull=False, translation__string=F('string_plural')), then=1
+                        Q(translation__locale=locale, translation__string=F('string')) |
+                        Q(translation__locale=locale, translation__plural_form__gt=-1,
+                          translation__plural_form__isnull=False, translation__string=F('string_plural')), then=1
                     ), output_field=models.IntegerField(), default=0
                 )
             )
         )
 
-    def missing(self):
+    def missing(self, locale, no_plurals):
+        if no_plurals:
+            missing = self.exclude(
+                pk__in=Translation.objects.filter(locale=locale).values('entity')
+            )
+            return Q(pk__in=missing)
+
         return Q(approved_count__lt=F('expected_count')) & Q(fuzzy_count__lt=F('expected_count')) & Q(suggested_count__lt=F('expected_count'))
 
-    def fuzzy(self):
+    def fuzzy(self, locale, no_plurals):
+        if no_plurals:
+            fuzzy = Translation.objects.filter(locale=locale, fuzzy=True).values('entity')
+            return Q(pk__in=fuzzy)
+
         return Q(fuzzy_count=F('expected_count')) & ~Q(approved_count=F('expected_count'))
 
-    def suggested(self):
+    def suggested(self, locale, no_plurals):
+        if no_plurals:
+            missing = self.exclude(
+                pk__in=Translation.objects.filter(locale=locale).values('entity')
+            )
+            approved_fuzzy = Translation.objects.filter(locale=locale).filter(
+                Q(approved=True) | Q(fuzzy=True)
+            ).values('entity')
+            return ~Q(pk__in=missing) & ~Q(pk__in=approved_fuzzy)
+
         return Q(suggested_count__gt=0) & ~Q(fuzzy_count=F('expected_count')) & ~Q(approved_count=F('expected_count'))
 
-    def translated(self):
+    def translated(self, locale, no_plurals):
+        if no_plurals:
+            approved = Translation.objects.filter(locale=locale, approved=True).values('entity')
+            return Q(pk__in=approved)
+
         return Q(approved_count=F('expected_count'))
 
-    def has_suggestions(self):
-        return Q(suggested_count__gt=0)
+    def has_suggestions(self, locale, no_plurals):
+        if no_plurals:
+            unreviewed = Translation.objects.filter(
+                locale=locale, approved=False, rejected=False, fuzzy=False
+            ).values('entity')
+            return Q(pk__in=unreviewed)
 
-    def unchanged(self):
+        return Q(unreviewed_count__gt=0)
+
+    def rejected(self, locale, no_plurals):
+        if no_plurals:
+            rejected = Translation.objects.filter(locale=locale, rejected=True).values('entity')
+            return Q(pk__in=rejected)
+
+        return Q(rejected_count__gt=0)
+
+    def unchanged(self, locale, no_plurals):
+        if no_plurals:
+            unchanged = Translation.objects.filter(
+                locale=locale, entity__in=self, string=F('entity__string')
+            ).values('entity')
+            return Q(pk__in=unchanged)
+
         return Q(unchanged_count=F('expected_count'))
 
     def authored_by(self, locale, emails):
@@ -1653,6 +1869,7 @@ class EntityQuerySet(models.QuerySet):
         )
 
 
+@python_2_unicode_compatible
 class Entity(DirtyFieldsMixin, models.Model):
     resource = models.ForeignKey(Resource, related_name='entities')
     string = models.TextField()
@@ -1697,7 +1914,7 @@ class Entity(DirtyFieldsMixin, models.Model):
 
         return key
 
-    def __unicode__(self):
+    def __str__(self):
         return self.string
 
     def has_changed(self, locale):
@@ -1722,7 +1939,11 @@ class Entity(DirtyFieldsMixin, models.Model):
             translations = [t for t in translations if t.plural_form == plural_form]
 
         if translations:
-            translation = sorted(translations, key=lambda k: (k.approved, k.date), reverse=True)[0]
+            translation = sorted(
+                translations,
+                key=lambda k: (k.approved, not k.rejected, k.date),
+                reverse=True
+            )[0]
             return translation.serialize()
 
         else:
@@ -1735,7 +1956,7 @@ class Entity(DirtyFieldsMixin, models.Model):
 
     @classmethod
     def for_project_locale(self, project, locale, paths=None, statuses=None,
-        search=None, exclude=None, extra=None, time=None, authors=None):
+                           search=None, exclude=None, extra=None, time=None, authors=None):
         """Get project entities with locale translations."""
 
         # Time & authors filters have to be applied before the aggregation
@@ -1743,6 +1964,11 @@ class Entity(DirtyFieldsMixin, models.Model):
         # unnecessary joins causing performance and logic issues.
         pre_filters = []
         post_filters = []
+
+        # Temporary optimization: use simpler status & extra filter DB queries for non-PO projects,
+        # which don't store translations for different plural forms in separate Translation model
+        # instances.
+        no_plurals = not project.resources.filter(format='po').exists()
 
         if time:
             if re.match('^[0-9]{12}-[0-9]{12}$', time):
@@ -1760,13 +1986,19 @@ class Entity(DirtyFieldsMixin, models.Model):
             entities = Entity.objects.all()
 
         if statuses:
-            post_filters.append(Entity.objects.filter_statuses(locale, statuses.split(',')))
+            post_filters.append(
+                Entity.objects.filter_statuses(locale, statuses.split(','), no_plurals)
+            )
 
         if extra:
-            post_filters.append(Entity.objects.filter_extra(locale, extra.split(',')))
+            post_filters.append(
+                Entity.objects.filter_extra(locale, extra.split(','), no_plurals)
+            )
 
         if post_filters:
-            entities = entities.with_status_counts(locale).filter(Q(*post_filters))
+            if not no_plurals:
+                entities = entities.with_status_counts(locale)
+            entities = entities.filter(Q(*post_filters))
 
         entities = entities.filter(
             resource__project=project,
@@ -1783,12 +2015,24 @@ class Entity(DirtyFieldsMixin, models.Model):
         if search:
             # https://docs.djangoproject.com/en/dev/topics/db/queries/#spanning-multi-valued-relationships
             search_query = (search, locale.db_collation)
-            entities = (
-                Entity.objects.filter(
-                    Q(translation__string__icontains_collate=search_query, translation__locale=locale) | Q(string__icontains=search) | Q(string_plural__icontains=search) | Q(comment__icontains=search) | Q(key__icontains=search),
-                    pk__in=entities
+            translation_matches = (
+                entities.filter(
+                    translation__string__icontains_collate=search_query,
+                    translation__locale=locale,
                 )
-                .distinct()
+                .values_list('id', flat=True)
+            )
+            entity_matches = (
+                entities.filter(
+                    Q(string__icontains=search) |
+                    Q(string_plural__icontains=search) |
+                    Q(comment__icontains=search) |
+                    Q(key__icontains=search)
+                )
+                .values_list('id', flat=True)
+            )
+            entities = Entity.objects.filter(
+                pk__in=set(list(translation_matches) + list(entity_matches))
             )
 
         entities = entities.prefetch_resources_translations(locale)
@@ -1827,8 +2071,10 @@ class Entity(DirtyFieldsMixin, models.Model):
                 'source': entity.source,
                 'obsolete': entity.obsolete,
                 'translation': translation_array,
-                'visible': False if entity.pk not in visible_entities or not visible_entities
-                                 else True
+                'visible': (
+                    False if entity.pk not in visible_entities or not visible_entities
+                    else True
+                ),
             })
 
         return entities_array
@@ -1933,6 +2179,7 @@ class TranslationQuerySet(models.QuerySet):
         return data
 
 
+@python_2_unicode_compatible
 class Translation(DirtyFieldsMixin, models.Model):
     entity = models.ForeignKey(Entity)
     locale = models.ForeignKey(Locale)
@@ -1941,6 +2188,8 @@ class Translation(DirtyFieldsMixin, models.Model):
     # 0=zero, 1=one, 2=two, 3=few, 4=many, 5=other, null=no plural forms
     plural_form = models.SmallIntegerField(null=True, blank=True)
     date = models.DateTimeField(default=timezone.now)
+    fuzzy = models.BooleanField(default=False)
+
     approved = models.BooleanField(default=False)
     approved_user = models.ForeignKey(
         User, related_name='approved_translations', null=True, blank=True)
@@ -1949,7 +2198,15 @@ class Translation(DirtyFieldsMixin, models.Model):
     unapproved_user = models.ForeignKey(
         User, related_name='unapproved_translations', null=True, blank=True)
     unapproved_date = models.DateTimeField(null=True, blank=True)
-    fuzzy = models.BooleanField(default=False)
+
+    rejected = models.BooleanField(default=False)
+    rejected_user = models.ForeignKey(
+        User, related_name='rejected_translations', null=True, blank=True)
+    rejected_date = models.DateTimeField(null=True, blank=True)
+
+    unrejected_user = models.ForeignKey(
+        User, related_name='unrejected_translations', null=True, blank=True)
+    unrejected_date = models.DateTimeField(null=True, blank=True)
 
     # Field contains a concatenated state of the  entity for faster search lookups.
     # Due to the nature of sql queries, it's faster to perform `icontains` filter on the same table
@@ -2008,7 +2265,7 @@ class Translation(DirtyFieldsMixin, models.Model):
                 'type': 'submitted',
             }
 
-    def __unicode__(self):
+    def __str__(self):
         return self.string
 
     def save(self, imported=False, *args, **kwargs):
@@ -2017,10 +2274,25 @@ class Translation(DirtyFieldsMixin, models.Model):
         # Only one translation can be approved at a time for any
         # Entity/Locale.
         if self.approved:
-            (Translation.objects
-                .filter(entity=self.entity, locale=self.locale, plural_form=self.plural_form)
+            (
+                Translation.objects
+                .filter(
+                    entity=self.entity,
+                    locale=self.locale,
+                    plural_form=self.plural_form,
+                    rejected=False,
+                )
                 .exclude(pk=self.pk)
-                .update(approved=False, approved_user=None, approved_date=None))
+                .update(
+                    approved=False,
+                    approved_user=None,
+                    approved_date=None,
+                    rejected=True,
+                    rejected_user=self.approved_user,
+                    rejected_date=self.approved_date,
+                    fuzzy=False,
+                )
+            )
 
             if not self.memory_entries.exists():
                 TranslationMemoryEntry.objects.create(
@@ -2077,29 +2349,30 @@ class Translation(DirtyFieldsMixin, models.Model):
         self.unapproved_date = timezone.now()
         self.save()
 
-        TranslatedResource.objects.get(resource=self.entity.resource, locale=self.locale).calculate_stats()
+        if stats:
+            TranslatedResource.objects.get(
+                resource=self.entity.resource,
+                locale=self.locale
+            ).calculate_stats()
+
         TranslationMemoryEntry.objects.filter(translation=self).delete()
         self.entity.mark_changed(self.locale)
 
-    def delete(self, stats=True, *args, **kwargs):
-        TranslationMemoryEntry.objects.filter(translation=self).delete()
-
-        super(Translation, self).delete(*args, **kwargs)
-
-        if stats:
-            TranslatedResource.objects.get(resource=self.entity.resource, locale=self.locale).calculate_stats()
-
-        # Mark entity as changed before deleting. This is skipped during
-        # bulk delete operations, but we shouldn't be bulk-deleting
-        # translations anyway.
-        if self.approved:
-            self.entity.mark_changed(self.locale)
+    def unreject(self, user):
+        """
+        Unreject translation.
+        """
+        self.rejected = False
+        self.unrejected_user = user
+        self.unrejected_date = timezone.now()
+        self.save()
 
     def serialize(self):
         return {
             'pk': self.pk,
             'string': self.string,
             'approved': self.approved,
+            'rejected': self.rejected,
             'fuzzy': self.fuzzy,
         }
 
@@ -2119,8 +2392,10 @@ class TranslationMemoryEntryManager(models.Manager):
 
         # Only check entities with similar length
         entries = self.extra(
-            where=['(CHAR_LENGTH(source) BETWEEN %s AND %s)',
-                  levenshtein_ratio_equation + ' > %s'],
+            where=[
+                '(CHAR_LENGTH(source) BETWEEN %s AND %s)',
+                levenshtein_ratio_equation + ' > %s'
+            ],
             params=(min_dist, max_dist, text, text, text, min_quality),
             select={'quality': levenshtein_ratio_equation + '* 100'},
             select_params=(text, text, text)

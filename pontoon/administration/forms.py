@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from django.forms.models import inlineformset_factory
 
 from pontoon.base.models import Project, Repository, Subpage, ExternalResource
+from pontoon.base.forms import HtmlField
 
 
 class ContactChoiceField(forms.ModelChoiceField):
@@ -12,6 +13,7 @@ class ContactChoiceField(forms.ModelChoiceField):
 
 class ProjectForm(forms.ModelForm):
     contact = ContactChoiceField(None, required=False)
+    info = HtmlField(required=False)
 
     class Meta:
         model = Project
@@ -21,7 +23,9 @@ class ProjectForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super(ProjectForm, self).__init__(*args, **kwargs)
-        self.fields['contact'].queryset = User.objects.filter(groups__name='project_managers').order_by('email')
+        self.fields['contact'].queryset = (
+            User.objects.filter(groups__name='project_managers').order_by('email')
+        )
 
 
 SubpageInlineFormSet = inlineformset_factory(

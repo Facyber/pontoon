@@ -5,6 +5,7 @@ Parser for silme-compatible translation formats.
 import codecs
 import os
 import silme
+from six import text_type
 
 from collections import OrderedDict
 from copy import copy
@@ -119,7 +120,7 @@ class SilmeResource(ParsedResource):
                 for comment in obj:
                     # Silme groups comments together, so we strip
                     # whitespace and split them up.
-                    lines = unicode(comment).strip().split('\n')
+                    lines = text_type(comment).strip().split('\n')
                     comments += [line.strip() for line in lines]
 
     @property
@@ -133,13 +134,18 @@ class SilmeResource(ParsedResource):
         """
         value = value.replace('"', '\\&quot;')
         value = value.replace("'", '\\&apos;')
+
         return value
 
     def unescape_quotes(self, value):
         value = value.replace('\\&quot;', '"')
+        value = value.replace('\\u0022', '"')  # Bug 1390111
         value = value.replace('\\"', '"')
+
         value = value.replace('\\&apos;', "'")
+        value = value.replace('\\u0027', "'")  # Bug 1390111
         value = value.replace("\\'", "'")
+
         return value
 
     def save(self, locale):
@@ -185,14 +191,17 @@ class SilmeResource(ParsedResource):
                     # No newline at end of file
                     continue
 
-                if type(line) == unicode and line.startswith('\n'):
+                if type(line) == text_type and line.startswith('\n'):
                     line = line[len('\n'):]
                     new_structure[pos] = line
                     if len(line) is 0:
                         new_structure.remove_element(pos)
 
         # Temporary fix for bug 1236281 until bug 721211 lands
-        if self.path.endswith('browser/chrome/browser/browser.properties') and locale.code == 'zh-CN':
+        if (
+            self.path.endswith('browser/chrome/browser/browser.properties') and
+            locale.code == 'zh-CN'
+        ):
             new_entity = silme.core.entity.Entity(
                 'browser.startup.homepage',
                 'http://start.firefoxchina.cn'
